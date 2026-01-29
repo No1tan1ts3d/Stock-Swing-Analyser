@@ -10,6 +10,7 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import csv
 import os
+from threading import Thread
 
 DEFAULT_CSV = "stock_universe.csv"
 MAX_DAYS_1M = 8  # Yahoo Finance limit for 1-minute data
@@ -258,6 +259,7 @@ class StockAnalysisApp:
 * **Interval:** Choose your data granularity (e.g., **1m, 5m, 15m**). Note that smaller intervals have stricter historical limits.
 * **Days:** Set the lookback period (e.g., `5d`).
 > **Note:** 1-minute data is restricted to a maximum of `MAX_DAYS_1M` by the provider.
+* **Expand/Collapse:** Double click on the symbol name in the results table to expand/collapse detailed daily data under each symbol.
 
 ---
 
@@ -361,6 +363,9 @@ class BaseTab:
         self.universe = universe
         self.frame = tk.Frame(notebook, bg="#f8fafc")
         self.is_running = False
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress_label = None
+        self.progress_bar = None
 
     def create_control_frame(self, title):
         """Create control panel"""
@@ -374,8 +379,44 @@ class BaseTab:
         frame.pack(fill=tk.X, padx=15, pady=15)
         return frame
 
-    def create_treeview(self, columns):
-        """Create results treeview"""
+    def create_progress_bar(self):
+        """Create progress bar frame and return it"""
+        progress_frame = tk.Frame(self.frame, bg="#f8fafc")
+        progress_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
+        
+        # Progress label
+        self.progress_label = tk.Label(progress_frame, 
+                                       text="Ready",
+                                       bg="#f8fafc",
+                                       fg="#1e293b",
+                                       font=("Helvetica", 9))
+        self.progress_label.pack(side=tk.LEFT, padx=5)
+        
+        # Progress bar
+        self.progress_bar = ttk.Progressbar(progress_frame,
+                                            variable=self.progress_var,
+                                            maximum=100,
+                                            length=300,
+                                            mode='determinate')
+        self.progress_bar.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        return progress_frame
+
+    def update_progress(self, current, total):
+        """Update progress bar and label"""
+        if total > 0:
+            progress_value = (current / total) * 100
+            self.progress_var.set(progress_value)
+            self.progress_label.config(text=f"Processing: {current}/{total}")
+            self.frame.update_idletasks()
+
+    def reset_progress(self):
+        """Reset progress bar"""
+        self.progress_var.set(0)
+        self.progress_label.config(text="Ready")
+
+    def create_treeview(self, columns, collapsible=False):
+        """Create results treeview with optional collapsible support"""
         tree_frame = tk.Frame(self.frame, bg="#f8fafc")
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 15))
         
@@ -408,6 +449,31 @@ class BaseTab:
                 tree.tag_configure(color, background=color)
             except ValueError:
                 pass
+        
+        return item
+
+    def add_parent_row(self, tree, values, threshold_col=None, threshold_val=0, reverse=False):
+        """Add a parent row for collapsible tree"""
+        item = tree.insert("", tk.END, values=values, open=False)
+        
+        if threshold_col is not None and len(values) > threshold_col:
+            try:
+                val = float(str(values[threshold_col]).rstrip('%'))
+                if reverse:
+                    color = '#fee2e2' if val > threshold_val else '#dcfce7' if val < -threshold_val else '#fef3c7'
+                else:
+                    color = '#dcfce7' if val > threshold_val else '#fee2e2' if val < -threshold_val else '#fef3c7'
+                tree.item(item, tags=(color,))
+                tree.tag_configure(color, background=color)
+            except ValueError:
+                pass
+        
+        return item
+
+    def add_child_row(self, tree, parent, values):
+        """Add a child row to a parent"""
+        item = tree.insert(parent, tk.END, values=values)
+        return item
 
 
 class SwingCounterTab(BaseTab):
@@ -428,15 +494,18 @@ class SwingCounterTab(BaseTab):
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
                  relief="flat", cursor="hand2").grid(row=0, column=2, padx=15)
         
-        self.tree = self.create_treeview(("Symbol", "Up Swings", "Down Swings", "Total Swings"))
+        self.create_progress_bar()
+        
+        self.tree = self.create_treeview(("Symbol", "Up Swings", "Down Swings", "Total Swings", "Avg Daily"))
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
         symbols = self.universe.load_symbols()
+        total_symbols = len(symbols)
         
-        for sym in symbols:
+        for idx, sym in enumerate(symbols):
+            self.update_progress(idx, total_symbols)
             try:
-
                 interval = self.app.interval_var.get().strip()
                 days = max(1, int(self.app.duration_var.get()))
                 period = f"{days}d"
@@ -445,24 +514,52 @@ class SwingCounterTab(BaseTab):
                 if data.empty:
                     continue
 
-                prices = data["Close"].values
-                up = down = 0
-                ref = prices[0]
-
-                for p in prices[1:]:
-                    pct_change = (p - ref) / ref * 100
-                    if pct_change >= self.swing_pct.get():
-                        up += 1
-                        ref = p
-                    elif pct_change <= -self.swing_pct.get():
-                        down += 1
-                        ref = p
-
-                total = up + down
-                self.add_colored_row(self.tree, (sym, up, down, total), 3, 5)
+                # Group by date to track daily swings
+                data["date"] = data.index.date
+                daily_swings = []
+                
+                for date, day_data in data.groupby("date"):
+                    prices = day_data["Close"].values
+                    if len(prices) < 2:
+                        continue
+                    
+                    up = down = 0
+                    ref = prices[0]
+                    
+                    for p in prices[1:]:
+                        pct_change = (p - ref) / ref * 100
+                        if pct_change >= self.swing_pct.get():
+                            up += 1
+                            ref = p
+                        elif pct_change <= -self.swing_pct.get():
+                            down += 1
+                            ref = p
+                    
+                    daily_swings.append((date, up, down, up + down))
+                
+                if not daily_swings:
+                    continue
+                
+                # Calculate summary
+                total_up = sum(x[1] for x in daily_swings)
+                total_down = sum(x[2] for x in daily_swings)
+                total_all = sum(x[3] for x in daily_swings)
+                avg_daily = total_all / len(daily_swings) if daily_swings else 0
+                
+                # Add parent row with summary
+                parent = self.add_parent_row(self.tree, 
+                                            (sym, total_up, total_down, total_all, f"{avg_daily:.2f}"),
+                                            3, 5)
+                
+                # Add child rows with daily data
+                for date, up, down, total in daily_swings:
+                    self.add_child_row(self.tree, parent, (f"  {date}", up, down, total, ""))
                 
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
+        
+        self.update_progress(total_symbols, total_symbols)
+        self.reset_progress()
 
 
 class DownFromHighTab(BaseTab):
@@ -483,16 +580,19 @@ class DownFromHighTab(BaseTab):
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
                  relief="flat", cursor="hand2").grid(row=0, column=2, padx=15)
         
-        self.tree = self.create_treeview(("Symbol", "Current Price", "Day High", "% Down"))
+        self.create_progress_bar()
+        
+        self.tree = self.create_treeview(("Symbol", "Current Price", "Day High", "% Down", "Avg %"))
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
         symbols = self.universe.load_symbols()
         threshold = self.n_pct.get()
+        total_symbols = len(symbols)
         
-        for sym in symbols:
+        for idx, sym in enumerate(symbols):
+            self.update_progress(idx, total_symbols)
             try:
-
                 interval = self.app.interval_var.get().strip()
                 days = max(1, int(self.app.duration_var.get()))
                 period = f"{days}d"
@@ -500,16 +600,42 @@ class DownFromHighTab(BaseTab):
                 if df.empty:
                     continue
 
-                high = df["High"].max()
-                current = df["Close"].iloc[-1]
-                drop = (high - current) / high * 100
-
-                if drop >= threshold:
-                    self.add_colored_row(self.tree, 
-                                       (sym, f"${current:.2f}", f"${high:.2f}", f"{drop:.2f}%"),
-                                       3, threshold, reverse=True)
+                # Group by date to track daily data
+                df["date"] = df.index.date
+                daily_data = []
+                
+                for date, day_data in df.groupby("date"):
+                    high = day_data["High"].max()
+                    current = day_data["Close"].iloc[-1]
+                    drop = (high - current) / high * 100
+                    daily_data.append((date, current, high, drop))
+                
+                if not daily_data:
+                    continue
+                
+                # Filter by threshold and calculate averages
+                filtered_data = [d for d in daily_data if d[3] >= threshold]
+                if not filtered_data:
+                    continue
+                
+                avg_drop = sum(d[3] for d in filtered_data) / len(filtered_data)
+                avg_high = sum(d[2] for d in filtered_data) / len(filtered_data)
+                avg_current = sum(d[1] for d in filtered_data) / len(filtered_data)
+                
+                # Add parent row with summary
+                parent = self.add_parent_row(self.tree, 
+                                            (sym, f"${avg_current:.2f}", f"${avg_high:.2f}", f"{avg_drop:.2f}%", f"{avg_drop:.2f}%"),
+                                            3, threshold, reverse=True)
+                
+                # Add child rows with daily data
+                for date, current, high, drop in filtered_data:
+                    self.add_child_row(self.tree, parent, (f"  {date}", f"${current:.2f}", f"${high:.2f}", f"{drop:.2f}%", ""))
+                
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
+        
+        self.update_progress(total_symbols, total_symbols)
+        self.reset_progress()
 
 
 class EarlySessionTab(BaseTab):
@@ -533,20 +659,23 @@ class EarlySessionTab(BaseTab):
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
                  relief="flat", cursor="hand2").grid(row=0, column=2, padx=15)
         
-        self.tree = self.create_treeview(("Symbol", "Date", "10-Min Price", "Day High", "% Gain"))
+        self.create_progress_bar()
+        
+        self.tree = self.create_treeview(("Symbol", "Date", "10-Min Price", "Day High", "% Gain", "Avg %"))
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
         symbols = self.universe.load_symbols()
         days = min(self.days.get(), MAX_DAYS_1M)
+        total_symbols = len(symbols)
         
         if self.days.get() > MAX_DAYS_1M:
             messagebox.showwarning("Limit Exceeded", 
                                   f"Yahoo Finance allows max {MAX_DAYS_1M} days for 1-minute data. Using {MAX_DAYS_1M} days.")
         
-        for sym in symbols:
+        for idx, sym in enumerate(symbols):
+            self.update_progress(idx, total_symbols)
             try:
-
                 interval = self.app.interval_var.get().strip()
                 df = yf.Ticker(sym).history(period=f"{days}d", interval=interval)
 
@@ -554,6 +683,8 @@ class EarlySessionTab(BaseTab):
                     continue
 
                 df["date"] = df.index.date
+                daily_records = []
+                
                 for d, day in df.groupby("date"):
                     if len(day) < 11:
                         continue
@@ -561,12 +692,30 @@ class EarlySessionTab(BaseTab):
                     p10 = day.iloc[10]["Close"]
                     high = day["High"].max()
                     pct = (high - p10) / p10 * 100
+                    daily_records.append((d, p10, high, pct))
+                
+                if not daily_records:
+                    continue
+                
+                # Calculate averages
+                avg_pct = sum(r[3] for r in daily_records) / len(daily_records)
+                avg_p10 = sum(r[1] for r in daily_records) / len(daily_records)
+                avg_high = sum(r[2] for r in daily_records) / len(daily_records)
+                
+                # Add parent row with summary
+                parent = self.add_parent_row(self.tree,
+                                            (sym, "SUMMARY", f"${avg_p10:.2f}", f"${avg_high:.2f}", f"{avg_pct:.2f}%", f"{avg_pct:.2f}%"),
+                                            4, 0)
+                
+                # Add child rows with daily data
+                for d, p10, high, pct in daily_records:
+                    self.add_child_row(self.tree, parent, (f"  {d}", f"{d}", f"${p10:.2f}", f"${high:.2f}", f"{pct:.2f}%", ""))
                     
-                    self.add_colored_row(self.tree,
-                                       (sym, d, f"${p10:.2f}", f"${high:.2f}", f"{pct:.2f}%"),
-                                       4, 0)
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
+        
+        self.update_progress(total_symbols, total_symbols)
+        self.reset_progress()
 
 
 class ReversalCycleTab(BaseTab):
@@ -593,55 +742,81 @@ class ReversalCycleTab(BaseTab):
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
                  relief="flat", cursor="hand2").grid(row=0, column=4, padx=15)
         
-        self.tree = self.create_treeview(("Symbol", "Total Cycles", "Avg Cycles/Day"))
+        self.create_progress_bar()
+        
+        self.tree = self.create_treeview(("Symbol", "Total Cycles", "Avg Cycles/Day", "Daily Breakdown"))
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
         symbols = self.universe.load_symbols()
         days = min(self.days.get(), MAX_DAYS_1M)
+        total_symbols = len(symbols)
         
         if self.days.get() > MAX_DAYS_1M:
             messagebox.showwarning("Limit Exceeded",
                                   f"Yahoo Finance allows max {MAX_DAYS_1M} days for 1-minute data. Using {MAX_DAYS_1M} days.")
         
-        for sym in symbols:
+        for idx, sym in enumerate(symbols):
+            self.update_progress(idx, total_symbols)
             try:
-
                 interval = self.app.interval_var.get().strip()
                 df = yf.Ticker(sym).history(period=f"{days}d", interval=interval)
 
                 if df.empty:
                     continue
 
-                cycles = 0
-                ref = df["Open"].iloc[0]
-                direction = None
-
-                for p in df["Close"]:
-                    pct_change = (p - ref) / ref * 100
+                df["date"] = df.index.date
+                daily_cycles = []
+                
+                for date, day_df in df.groupby("date"):
+                    if len(day_df) < 2:
+                        continue
                     
-                    if direction is None:
-                        if pct_change >= self.n_pct.get():
-                            direction = "up"
-                            ref = p
-                        elif pct_change <= -self.n_pct.get():
-                            direction = "down"
-                            ref = p
-                    else:
-                        if direction == "up" and pct_change <= -self.n_pct.get():
-                            cycles += 1
-                            direction = None
-                            ref = p
-                        elif direction == "down" and pct_change >= self.n_pct.get():
-                            cycles += 1
-                            direction = None
-                            ref = p
+                    cycles = 0
+                    ref = day_df["Open"].iloc[0]
+                    direction = None
 
-                avg_cycles = cycles / days if days > 0 else 0
-                self.add_colored_row(self.tree, (sym, cycles, f"{avg_cycles:.2f}"), 1, 5)
+                    for p in day_df["Close"]:
+                        pct_change = (p - ref) / ref * 100
+                        
+                        if direction is None:
+                            if pct_change >= self.n_pct.get():
+                                direction = "up"
+                                ref = p
+                            elif pct_change <= -self.n_pct.get():
+                                direction = "down"
+                                ref = p
+                        else:
+                            if direction == "up" and pct_change <= -self.n_pct.get():
+                                cycles += 1
+                                direction = None
+                                ref = p
+                            elif direction == "down" and pct_change >= self.n_pct.get():
+                                cycles += 1
+                                direction = None
+                                ref = p
+                    
+                    daily_cycles.append((date, cycles))
+                
+                if not daily_cycles:
+                    continue
+                
+                # Calculate summary
+                total_cycles = sum(c[1] for c in daily_cycles)
+                avg_cycles = total_cycles / len(daily_cycles) if daily_cycles else 0
+                
+                # Add parent row with summary
+                parent = self.add_parent_row(self.tree, (sym, total_cycles, f"{avg_cycles:.2f}", f"{len(daily_cycles)} days"), 1, 5)
+                
+                # Add child rows with daily data
+                for date, cycles in daily_cycles:
+                    self.add_child_row(self.tree, parent, (f"  {date}", cycles, "", ""))
                 
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
+        
+        self.update_progress(total_symbols, total_symbols)
+        self.reset_progress()
 
 
 
