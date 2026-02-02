@@ -605,7 +605,11 @@ class DownFromHighTab(BaseTab):
                 daily_data = []
                 
                 for date, day_data in df.groupby("date"):
-                    high = day_data["High"].max()
+                    
+                    if len(day_data) <= 10:
+                        continue
+                    day_after_10 = day_data.iloc[11:]
+                    high = day_after_10["High"].max()
                     current = day_data["Close"].iloc[-1]
                     drop = (high - current) / high * 100
                     daily_data.append((date, current, high, drop))
@@ -686,11 +690,12 @@ class EarlySessionTab(BaseTab):
                 daily_records = []
                 
                 for d, day in df.groupby("date"):
-                    if len(day) < 11:
+                    if len(day) < 12:
                         continue
-                    
                     p10 = day.iloc[10]["Close"]
-                    high = day["High"].max()
+                    
+                    day_after_10 = day.iloc[11:]
+                    high = day_after_10["High"].max()
                     pct = (high - p10) / p10 * 100
                     daily_records.append((d, p10, high, pct))
                 
