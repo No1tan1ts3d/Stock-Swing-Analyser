@@ -647,80 +647,161 @@ class EarlySessionTab(BaseTab):
     
     def __init__(self, notebook, universe, app):
         super().__init__(notebook, universe, app)
-        self.days = tk.IntVar(value=5)
+        # Date range selection state
+        self.start_date_var = tk.StringVar()
+        self.end_date_var = tk.StringVar()
+        self._init_default_dates()
         self.build_ui()
 
     def build_ui(self):
-        controls = self.create_control_frame("Analysis Settings (Max 7 days due to Yahoo Finance API limits)")
-        
-        tk.Label(controls, text="Days to Analyze:", bg="#ffffff", font=("Helvetica", 10)).grid(row=0, column=0, padx=5)
-        
-        spinbox = tk.Spinbox(controls, from_=1, to=MAX_DAYS_1M, textvariable=self.days, 
-                            width=8, font=("Helvetica", 10))
-        spinbox.grid(row=0, column=1, padx=5)
-        
+        controls = self.create_control_frame("Early Session Performance (10th minute vs Day High)")
+
+        # Date range inputs (replace numeric Days to Analyze)
+        tk.Label(controls, text="Start Date (YYYY-MM-DD):", bg="#ffffff", font=("Helvetica", 10)).grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        tk.Entry(controls, textvariable=self.start_date_var, width=12, font=("Helvetica", 10)).grid(row=0, column=1, padx=5, pady=2, sticky="w")
+
+        tk.Label(controls, text="End Date (YYYY-MM-DD):", bg="#ffffff", font=("Helvetica", 10)).grid(row=0, column=2, padx=5, pady=2, sticky="w")
+        tk.Entry(controls, textvariable=self.end_date_var, width=12, font=("Helvetica", 10)).grid(row=0, column=3, padx=5, pady=2, sticky="w")
+
+        # Predefined date buttons (1D / 3D / 5D / 1W) — update dates based on current trading day
+        preset_frame = tk.Frame(controls, bg="#ffffff")
+        preset_frame.grid(row=1, column=0, columnspan=4, pady=(4, 2), sticky="w")
+        for label, days in [("1D", 1), ("3D", 3), ("5D", 5), ("1W", 5)]:
+            tk.Button(
+                preset_frame,
+                text=label,
+                bg="#e5e7eb",
+                fg="#111827",
+                font=("Helvetica", 9),
+                relief="flat",
+                padx=8,
+                pady=3,
+                cursor="hand2",
+                command=lambda d=days: self.apply_preset_days(d),
+            ).pack(side=tk.LEFT, padx=3)
+
         tk.Button(controls, text="📊 Analyze", bg="#3b82f6", fg="white",
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
-                 relief="flat", cursor="hand2").grid(row=0, column=2, padx=15)
+                 relief="flat", cursor="hand2").grid(row=0, column=4, padx=15, pady=2, sticky="w")
         
         self.create_progress_bar()
         
         self.tree = self.create_treeview(("Symbol", "Date", "10-Min Price", "Day High", "% Gain", "Avg %"))
 
     def run(self):
+        """Analyze early-session performance over a date range with business-day handling."""
         self.tree.delete(*self.tree.get_children())
         symbols = self.universe.load_symbols()
-        days = min(self.days.get(), MAX_DAYS_1M)
+
+        # Parse and validate dates
+        try:
+            start_date = datetime.strptime(self.start_date_var.get().strip(), "%Y-%m-%d").date()
+            end_date = datetime.strptime(self.end_date_var.get().strip(), "%Y-%m-%d").date()
+        except ValueError:
+            messagebox.showerror("Invalid Dates", "Please enter valid Start and End dates in YYYY-MM-DD format.")
+            return
+
+        if start_date >= end_date:
+            messagebox.showerror("Invalid Range", "Start Date must be earlier than End Date.")
+            return
+
+        # Build trading calendar: business days only (skip weekends & common holidays)
+        trading_range = pd.bdate_range(start=start_date, end=end_date)
+        if trading_range.empty:
+            messagebox.showerror("No Trading Days", "The selected date range contains no valid trading days.")
+            return
+
+        # Respect Yahoo 1-minute history limits if using 1m interval
+        interval = self.app.interval_var.get().strip()
+        trading_days = [d.date() for d in trading_range]
+        if interval == "1m" and len(trading_days) > MAX_DAYS_1M:
+            trading_days = trading_days[-MAX_DAYS_1M:]
+            messagebox.showwarning(
+                "Limit Applied",
+                f"Yahoo Finance allows max {MAX_DAYS_1M} trading days for 1-minute data. "
+                f"Using the most recent {MAX_DAYS_1M} days in the selected range.",
+            )
+
+        if not trading_days:
+            messagebox.showerror("No Trading Days", "No valid trading days after applying provider limits.")
+            return
+
         total_symbols = len(symbols)
-        
-        if self.days.get() > MAX_DAYS_1M:
-            messagebox.showwarning("Limit Exceeded", 
-                                  f"Yahoo Finance allows max {MAX_DAYS_1M} days for 1-minute data. Using {MAX_DAYS_1M} days.")
-        
+
         for idx, sym in enumerate(symbols):
             self.update_progress(idx, total_symbols)
             try:
-                interval = self.app.interval_var.get().strip()
-                df = yf.Ticker(sym).history(period=f"{days}d", interval=interval)
+                df = yf.Ticker(sym).history(
+                    start=trading_days[0],
+                    end=trading_days[-1] + timedelta(days=1),
+                    interval=interval,
+                )
 
                 if df.empty:
                     continue
 
                 df["date"] = df.index.date
                 daily_records = []
-                
+
                 for d, day in df.groupby("date"):
                     if len(day) < 12:
                         continue
                     p10 = day.iloc[10]["Close"]
-                    
+
                     day_after_10 = day.iloc[11:]
                     high = day_after_10["High"].max()
                     pct = (high - p10) / p10 * 100
                     daily_records.append((d, p10, high, pct))
-                
+
                 if not daily_records:
                     continue
-                
+
                 # Calculate averages
                 avg_pct = sum(r[3] for r in daily_records) / len(daily_records)
                 avg_p10 = sum(r[1] for r in daily_records) / len(daily_records)
                 avg_high = sum(r[2] for r in daily_records) / len(daily_records)
-                
+
                 # Add parent row with summary
-                parent = self.add_parent_row(self.tree,
-                                            (sym, "SUMMARY", f"${avg_p10:.2f}", f"${avg_high:.2f}", f"{avg_pct:.2f}%", f"{avg_pct:.2f}%"),
-                                            4, 0)
-                
+                parent = self.add_parent_row(
+                    self.tree,
+                    (sym, "SUMMARY", f"${avg_p10:.2f}", f"${avg_high:.2f}", f"{avg_pct:.2f}%", f"{avg_pct:.2f}%"),
+                    4,
+                    0,
+                )
+
                 # Add child rows with daily data
                 for d, p10, high, pct in daily_records:
                     self.add_child_row(self.tree, parent, (f"  {d}", f"{d}", f"${p10:.2f}", f"${high:.2f}", f"{pct:.2f}%", ""))
-                    
+
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
-        
+
         self.update_progress(total_symbols, total_symbols)
         self.reset_progress()
+
+    def _init_default_dates(self):
+        """Initialize start/end date fields based on the current trading day."""
+        today = datetime.now().date()
+        # Current trading day = last business day on or before today
+        current_trading = pd.bdate_range(end=today, periods=1)[0].date()
+        # Default: last 5 business days ending at current trading day
+        bdays = pd.bdate_range(end=current_trading, periods=5)
+        self.start_date_var.set(bdays[0].date().strftime("%Y-%m-%d"))
+        self.end_date_var.set(bdays[-1].date().strftime("%Y-%m-%d"))
+
+    def apply_preset_days(self, num_days):
+        """Apply a backward-looking preset (1D/3D/5D/1W) from the current trading day.
+
+        This updates only the Start/End date fields; it does NOT trigger analysis automatically.
+        """
+        today = datetime.now().date()
+        # Anchor on current trading day (last business day up to today)
+        current_trading = pd.bdate_range(end=today, periods=1)[0].date()
+        bdays = pd.bdate_range(end=current_trading, periods=num_days)
+        if bdays.empty:
+            return
+        self.start_date_var.set(bdays[0].date().strftime("%Y-%m-%d"))
+        self.end_date_var.set(bdays[-1].date().strftime("%Y-%m-%d"))
 
 
 class ReversalCycleTab(BaseTab):
