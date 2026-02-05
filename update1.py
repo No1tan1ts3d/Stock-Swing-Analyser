@@ -1032,6 +1032,19 @@ class EarlySessionTab(BaseTab):
                     close_price = float(day["Close"].iloc[-1])
                     pct = (close_price - start_price) / start_price * 100 if start_price != 0 else 0.0
 
+                    # Direction based on post-09:40 movement relative to start price
+                    # If any price AFTER 09:40 goes above start_price -> HIGH (green)
+                    # Otherwise, if any price AFTER 09:40 goes below start_price -> LOW (red)
+                    after_start = day.iloc[start_idx:]
+                    seg_max = float(after_start["High"].max())
+                    seg_min = float(after_start["Low"].min())
+                    if seg_max > start_price:
+                        direction = "HIGH"
+                    elif seg_min < start_price:
+                        direction = "LOW"
+                    else:
+                        direction = "NEUTRAL"
+
                     # Session low/high with timestamps
                     low_idx = day["Low"].idxmin()
                     high_idx = day["High"].idxmax()
@@ -1047,6 +1060,7 @@ class EarlySessionTab(BaseTab):
                             "close": close_price,
                             "pct": pct,
                             "open_pct": open_pct,
+                            "direction": direction,
                             "low": low_price,
                             "low_ts": low_ts,
                             "high": high_price,
@@ -1226,6 +1240,20 @@ class EarlySessionTab(BaseTab):
             else:
                 date_label = f"{len(records)} sessions"
 
+            # Determine overall direction for the summary row
+            high_days = [r for r in records if r.get("direction") == "HIGH"]
+            low_days = [r for r in records if r.get("direction") == "LOW"]
+            if high_days and not low_days:
+                summary_direction = "HIGH"
+            elif low_days and not high_days:
+                summary_direction = "LOW"
+            elif avg_pct > 0:
+                summary_direction = "HIGH"
+            elif avg_pct < 0:
+                summary_direction = "LOW"
+            else:
+                summary_direction = "NEUTRAL"
+
             parent = self.add_parent_row(
                 self.tree,
                 (
@@ -1241,6 +1269,8 @@ class EarlySessionTab(BaseTab):
                 threshold_val=0,
                 reverse=False,
             )
+            # Override default % gain-based coloring with explicit HIGH/LOW/NEUTRAL direction
+            self._color_item_by_direction(self.tree, parent, summary_direction)
 
             if not detailed:
                 # Average mode shows only one row per symbol
@@ -1248,7 +1278,7 @@ class EarlySessionTab(BaseTab):
 
             for r in records:
                 remarks = f"LOW: {r['low']:.2f} @ {r['low_ts']} | HIGH: {r['high']:.2f} @ {r['high_ts']}"
-                self.add_child_row(
+                child = self.add_child_row(
                     self.tree,
                     parent,
                     (
@@ -1261,6 +1291,19 @@ class EarlySessionTab(BaseTab):
                         remarks,
                     ),
                 )
+                # Color each session row according to its direction (HIGH=green, LOW=red)
+                self._color_item_by_direction(self.tree, child, r.get("direction", "NEUTRAL"))
+
+    def _color_item_by_direction(self, tree, item, direction):
+        """Apply HIGH/LOW/NEUTRAL color convention to a tree item."""
+        if direction == "HIGH":
+            color = "#dcfce7"  # green
+        elif direction == "LOW":
+            color = "#fee2e2"  # red
+        else:
+            color = "#fef3c7"  # neutral/amber
+        tree.item(item, tags=(color,))
+        tree.tag_configure(color, background=color)
 
 
 class ReversalCycleTab(BaseTab):
