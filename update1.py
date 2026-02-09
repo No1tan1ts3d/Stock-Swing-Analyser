@@ -7,13 +7,59 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import csv
 import os
 from threading import Thread
+import re
 
 DEFAULT_CSV = "stock_universe.csv"
 MAX_DAYS_1M = 8  # Yahoo Finance limit for 1-minute data
+
+
+def is_trading_day(dt):
+    """Check if a date is a trading day (Monday-Friday)"""
+    return dt.weekday() < 5  # 0-4 are Monday-Friday
+
+
+def get_previous_trading_day(dt):
+    """Get the previous trading day"""
+    prev_day = dt - timedelta(days=1)
+    while not is_trading_day(prev_day):
+        prev_day -= timedelta(days=1)
+    return prev_day
+
+
+def get_trading_days_back(days):
+    """Get start and end dates for N trading days back from today"""
+    end_date = date.today()
+    # If today is weekend, go back to Friday
+    while not is_trading_day(end_date):
+        end_date -= timedelta(days=1)
+    
+    start_date = end_date
+    trading_days_counted = 0
+    
+    while trading_days_counted < days - 1:
+        start_date = get_previous_trading_day(start_date)
+        trading_days_counted += 1
+    
+    return start_date, end_date
+
+
+def parse_date(date_str):
+    """Parse date string in YYYY-MM-DD format"""
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def format_date(dt):
+    """Format date to YYYY-MM-DD string"""
+    if isinstance(dt, date):
+        return dt.strftime("%Y-%m-%d")
+    return str(dt)
 
 
 class StockUniverse:
@@ -41,6 +87,20 @@ class StockUniverse:
                         writer.writerow([s.strip().upper()])
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save symbols: {str(e)}")
+    
+    def clear_symbols(self):
+        """Clear all symbols from memory (does not delete CSV file)"""
+        self.save_symbols([])
+    
+    def load_default_csv(self):
+        """Load the default CSV file"""
+        if os.path.exists(self.csv_path):
+            return self.load_symbols()
+        else:
+            # Create default symbols
+            default_symbols = ["AAPL", "MSFT", "GOOGL", "TSLA"]
+            self.save_symbols(default_symbols)
+            return default_symbols
 
 
 class StockAnalysisApp:
@@ -57,9 +117,18 @@ class StockAnalysisApp:
         self.tabs = []
 
         self.universe = StockUniverse()
+        # Initialize active_symbols with loaded symbols
+        self.active_symbols = self.universe.load_symbols()
+        self.symbol_selection_mode = tk.StringVar(value="csv")  # "csv" or "manual"
  
         self.interval_var = tk.StringVar(value="1m")
         self.duration_var = tk.IntVar(value=1)
+        
+        # Date range variables
+        today = date.today()
+        self.start_date_var = tk.StringVar(value=format_date(get_previous_trading_day(today)))
+        self.end_date_var = tk.StringVar(value=format_date(today))
+        
         self.setup_styles()
         self.create_header()
         self.create_toolbar()
@@ -118,18 +187,22 @@ class StockAnalysisApp:
                 fg="#94a3b8").pack()
 
     def create_toolbar(self):
-        """Create toolbar with CSV management"""
+        """Create toolbar with CSV management and controls"""
         toolbar = tk.Frame(self.root, bg="#e2e8f0", pady=10)
         toolbar.pack(fill=tk.X, padx=10, pady=(10, 0))
         
-        btn_frame_left = tk.Frame(toolbar, bg="#e2e8f0")
-        btn_frame_left.pack(side=tk.LEFT)
+        # Left side: CSV management buttons
+        btn_frame = tk.Frame(toolbar, bg="#e2e8f0")
+        btn_frame.pack(side=tk.LEFT)
         
         buttons = [
             ("📁 Upload CSV", self.upload_csv, "#3b82f6"),
+            ("📂 Load Default CSV", self.load_default_csv, "#3b82f6"),
             ("➕ Add Symbol", self.add_symbol, "#10b981"),
             ("✏️ Edit Symbols", self.edit_symbols, "#f59e0b"),
-            ("💾 Save CSV", lambda: messagebox.showinfo("Info", f"Symbols saved to {self.universe.csv_path}"), "#6366f1"),
+            ("🎯 Select Stocks", self.select_stocks, "#8b5cf6"),
+            ("🗑️ Clear Symbols", self.clear_symbols, "#ef4444"),
+            ("💾 Save CSV", lambda: messagebox.showinfo("Info", f"Symbols saved to {self.universe.csv_path}"), "#6366f1")
         ]
         
         for text, command, color in buttons:
@@ -140,68 +213,196 @@ class StockAnalysisApp:
                      fg="white",
                      font=("Helvetica", 9, "bold"),
                      relief="flat",
-                     padx=15,
+                     padx=12,
                      pady=8,
-                     cursor="hand2").pack(side=tk.LEFT, padx=5)
-
-        # Symbol controls shared from toolbar (target Early Session tab when active)
-        btn_frame_right = tk.Frame(toolbar, bg="#e2e8f0")
-        btn_frame_right.pack(side=tk.LEFT, padx=(20, 0))
-
-        tk.Button(
-            btn_frame_right,
-            text="Load Default Symbols",
-            command=self.toolbar_load_default_symbols,
-            bg="#6366f1",
-            fg="white",
-            font=("Helvetica", 9, "bold"),
-            relief="flat",
-            padx=15,
-            pady=8,
-            cursor="hand2",
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(
-            btn_frame_right,
-            text="Clear Symbols",
-            command=self.toolbar_clear_symbols,
-            bg="#ef4444",
-            fg="white",
-            font=("Helvetica", 9, "bold"),
-            relief="flat",
-            padx=15,
-            pady=8,
-            cursor="hand2",
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Button(
-            btn_frame_right,
-            text="Select Symbols from CSV",
-            command=self.toolbar_open_symbol_selector,
-            bg="#3b82f6",
-            fg="white",
-            font=("Helvetica", 9, "bold"),
-            relief="flat",
-            padx=15,
-            pady=8,
-            cursor="hand2",
-        ).pack(side=tk.LEFT, padx=5)
-            
-        # --- NEW: Global interval & duration controls ---
+                     cursor="hand2").pack(side=tk.LEFT, padx=3)
+        
+        # Right side: Controls
         control_frame = tk.Frame(toolbar, bg="#e2e8f0")
         control_frame.pack(side=tk.RIGHT, padx=10)
 
-        # Interval input (user can type custom value)
-        tk.Label(control_frame, text="Interval:", bg="#e2e8f0").pack(side=tk.LEFT, padx=(5,2))
-        tk.Entry(control_frame, textvariable=self.interval_var, width=8).pack(side=tk.LEFT, padx=5)
+        # Interval input
+        tk.Label(control_frame, text="Interval:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(5,2))
+        tk.Entry(control_frame, textvariable=self.interval_var, width=8, font=("Helvetica", 9)).pack(side=tk.LEFT, padx=5)
 
-        # Duration (days) spinbox — used as period like 'Nd' for intraday
-        tk.Label(control_frame, text="Days:", bg="#e2e8f0").pack(side=tk.LEFT, padx=(10,2))
-        tk.Spinbox(control_frame, from_=1, to=MAX_DAYS_1M, width=4, textvariable=self.duration_var).pack(side=tk.LEFT, padx=5)
+        # Date range controls
+        tk.Label(control_frame, text="Start:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(10,2))
+        start_entry = tk.Entry(control_frame, textvariable=self.start_date_var, width=12, font=("Helvetica", 9))
+        start_entry.pack(side=tk.LEFT, padx=2)
+        start_entry.bind('<FocusOut>', lambda e: self.validate_date_range())
+        
+        tk.Label(control_frame, text="End:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(5,2))
+        end_entry = tk.Entry(control_frame, textvariable=self.end_date_var, width=12, font=("Helvetica", 9))
+        end_entry.pack(side=tk.LEFT, padx=2)
+        end_entry.bind('<FocusOut>', lambda e: self.validate_date_range())
+        
+        # Predefined date range buttons
+        date_btn_frame = tk.Frame(control_frame, bg="#e2e8f0")
+        date_btn_frame.pack(side=tk.LEFT, padx=(10, 0))
+        
+        for label, days in [("1D", 1), ("3D", 3), ("5D", 5), ("1W", 5)]:
+            tk.Button(date_btn_frame, text=label, command=lambda d=days: self.set_date_range(d),
+                     bg="#94a3b8", fg="white", font=("Helvetica", 8, "bold"),
+                     relief="flat", padx=6, pady=4, cursor="hand2").pack(side=tk.LEFT, padx=2)
 
         # Help button
         tk.Button(control_frame, text="❓ Help", command=self.show_help, bg="#64748b", fg="white",
                   font=("Helvetica", 9), relief="flat", padx=8, pady=6, cursor="hand2").pack(side=tk.LEFT, padx=(12,0))
+    
+    def set_date_range(self, trading_days):
+        """Set date range based on number of trading days"""
+        start_date, end_date = get_trading_days_back(trading_days)
+        self.start_date_var.set(format_date(start_date))
+        self.end_date_var.set(format_date(end_date))
+    
+    def validate_date_range(self):
+        """Validate that start date is before end date"""
+        start_str = self.start_date_var.get()
+        end_str = self.end_date_var.get()
+        
+        start_date = parse_date(start_str)
+        end_date = parse_date(end_str)
+        
+        if start_date and end_date:
+            if start_date > end_date:
+                messagebox.showerror("Invalid Date Range", "Start date must be before end date")
+                # Auto-correct
+                self.start_date_var.set(format_date(get_previous_trading_day(end_date)))
+            elif not is_trading_day(start_date):
+                messagebox.showwarning("Non-Trading Day", f"{start_str} is not a trading day. Adjusting...")
+                self.start_date_var.set(format_date(get_previous_trading_day(start_date)))
+            elif not is_trading_day(end_date):
+                messagebox.showwarning("Non-Trading Day", f"{end_str} is not a trading day. Adjusting...")
+                self.end_date_var.set(format_date(get_previous_trading_day(end_date)))
+    
+    def load_default_csv(self):
+        """Load default CSV file"""
+        symbols = self.universe.load_default_csv()
+        self.active_symbols = symbols  # Update active symbols
+        messagebox.showinfo("Success", f"Loaded {len(symbols)} symbols from default CSV")
+    
+    def clear_symbols(self):
+        """Clear all symbols from active analysis"""
+        if messagebox.askyesno("Confirm", "Clear all symbols from analysis? (CSV file will not be deleted)"):
+            self.universe.clear_symbols()
+            self.active_symbols = []
+            messagebox.showinfo("Success", "Symbols cleared from analysis")
+    
+    def select_stocks(self):
+        """Open stock selection dialog with manual entry and checkbox list"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select Stocks for Analysis")
+        dialog.geometry("500x600")
+        dialog.configure(bg="#f8fafc")
+        
+        # Store references locally for this dialog
+        manual_frame = None
+        checkbox_frame = None
+        manual_entry = None
+        checkbox_vars = {}
+        checkbox_inner = None
+        
+        # Mode selection
+        mode_frame = tk.LabelFrame(dialog, text="Selection Mode", bg="#ffffff", font=("Helvetica", 10, "bold"))
+        mode_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        def switch_mode(mode):
+            nonlocal manual_frame, checkbox_frame
+            if mode == "manual":
+                if checkbox_frame:
+                    checkbox_frame.pack_forget()
+                if manual_frame:
+                    manual_frame.pack(fill=tk.BOTH, expand=True)
+            else:
+                if manual_frame:
+                    manual_frame.pack_forget()
+                if checkbox_frame:
+                    checkbox_frame.pack(fill=tk.BOTH, expand=True)
+        
+        manual_radio = tk.Radiobutton(mode_frame, text="Manual Entry", variable=self.symbol_selection_mode,
+                                      value="manual", bg="#ffffff", font=("Helvetica", 9),
+                                      command=lambda: switch_mode("manual"))
+        manual_radio.pack(side=tk.LEFT, padx=10, pady=5)
+        
+        csv_radio = tk.Radiobutton(mode_frame, text="Checkbox List (from CSV)", variable=self.symbol_selection_mode,
+                                  value="csv", bg="#ffffff", font=("Helvetica", 9),
+                                  command=lambda: switch_mode("csv"))
+        csv_radio.pack(side=tk.LEFT, padx=10, pady=5)
+        
+        # Content frame
+        content_frame = tk.Frame(dialog, bg="#f8fafc")
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        
+        # Manual entry frame
+        manual_frame = tk.Frame(content_frame, bg="#f8fafc")
+        tk.Label(manual_frame, text="Enter symbols (comma or space separated):", 
+                bg="#f8fafc", font=("Helvetica", 9)).pack(anchor=tk.W, pady=5)
+        manual_entry = tk.Text(manual_frame, font=("Courier", 10), height=15, width=50)
+        manual_entry.pack(fill=tk.BOTH, expand=True, pady=5)
+        if self.active_symbols:
+            manual_entry.insert("1.0", ", ".join(self.active_symbols))
+        
+        # Checkbox list frame
+        checkbox_frame = tk.Frame(content_frame, bg="#f8fafc")
+        scroll_frame = tk.Frame(checkbox_frame, bg="#f8fafc")
+        scroll_frame.pack(fill=tk.BOTH, expand=True)
+        
+        canvas = tk.Canvas(scroll_frame, bg="#ffffff", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(scroll_frame, orient="vertical", command=canvas.yview)
+        checkbox_inner = tk.Frame(canvas, bg="#ffffff")
+        
+        checkbox_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=checkbox_inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Populate checkboxes
+        symbols = self.universe.load_symbols()
+        for sym in sorted(symbols):
+            var = tk.BooleanVar(value=sym in self.active_symbols if self.active_symbols else True)
+            checkbox_vars[sym] = var
+            
+            checkbox = tk.Checkbutton(checkbox_inner, text=sym, variable=var,
+                                     bg="#ffffff", font=("Helvetica", 9),
+                                     anchor=tk.W)
+            checkbox.pack(fill=tk.X, padx=5, pady=2)
+        
+        # Show initial mode
+        if self.symbol_selection_mode.get() == "manual":
+            manual_frame.pack(fill=tk.BOTH, expand=True)
+        else:
+            checkbox_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Buttons
+        btn_frame = tk.Frame(dialog, bg="#f8fafc")
+        btn_frame.pack(fill=tk.X, padx=15, pady=10)
+        
+        def apply_selection():
+            if self.symbol_selection_mode.get() == "manual":
+                text = manual_entry.get("1.0", tk.END).strip()
+                symbols = [s.strip().upper() for s in re.split(r'[,\s]+', text) if s.strip()]
+            else:
+                symbols = [sym for sym, var in checkbox_vars.items() if var.get()]
+            
+            if not symbols:
+                messagebox.showwarning("No Selection", "Please select at least one symbol")
+                return
+            
+            # Update active symbols and save to CSV
+            self.active_symbols = symbols
+            self.universe.save_symbols(symbols)
+            messagebox.showinfo("Success", f"Selected {len(symbols)} symbols: {', '.join(symbols[:5])}{'...' if len(symbols) > 5 else ''}")
+            dialog.destroy()
+        
+        tk.Button(btn_frame, text="Apply Selection", command=apply_selection,
+                 bg="#3b82f6", fg="white", font=("Helvetica", 10, "bold"),
+                 padx=20, pady=8, relief="flat", cursor="hand2").pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(btn_frame, text="Cancel", command=dialog.destroy,
+                 bg="#94a3b8", fg="white", font=("Helvetica", 10),
+                 padx=20, pady=8, relief="flat", cursor="hand2").pack(side=tk.LEFT, padx=5)
 
 
     def create_tabs(self):
@@ -272,6 +473,7 @@ class StockAnalysisApp:
                 with open(file_path, 'r') as f:
                     symbols = [row[0].strip().upper() for row in csv.reader(f) if row and row[0].strip()]
                 self.universe.save_symbols(symbols)
+                self.active_symbols = symbols  # Update active symbols
                 messagebox.showinfo("Success", f"Loaded {len(symbols)} symbols from {os.path.basename(file_path)}")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load CSV: {str(e)}")
@@ -294,6 +496,7 @@ class StockAnalysisApp:
                 symbols = self.universe.load_symbols()
                 symbols.append(symbol)
                 self.universe.save_symbols(symbols)
+                self.active_symbols = symbols  # Update active symbols
                 messagebox.showinfo("Success", f"Added {symbol}")
                 dialog.destroy()
         
@@ -320,6 +523,7 @@ class StockAnalysisApp:
             content = text.get("1.0", tk.END)
             new_symbols = [s.strip().upper() for s in content.split("\n") if s.strip()]
             self.universe.save_symbols(new_symbols)
+            self.active_symbols = new_symbols  # Update active symbols
             messagebox.showinfo("Success", f"Updated {len(new_symbols)} symbols")
             dialog.destroy()
         
@@ -357,21 +561,10 @@ class StockAnalysisApp:
 ## 🛠️ Global Controls
 
 * **Interval:** Choose your data granularity (e.g., **1m, 5m, 15m**). Note that smaller intervals have stricter historical limits.
-* **Days:** Set the lookback period (e.g., `5d`).
-> **Note:** 1-minute data is restricted to a maximum of `MAX_DAYS_1M` by the provider.
-
-### 📊 Toolbar Controls
-
-* **Upload CSV / Add Symbol / Edit Symbols / Save CSV:** Manage your stock universe CSV file.
-* **Load Default Symbols:** Loads all symbols from the default CSV into the active symbol list (Early Session tab only).
-* **Clear Symbols:** Clears the active symbol list without modifying the CSV file (Early Session tab only).
-* **Select Symbols from CSV:** Opens a checkbox dialog to select symbols from your CSV universe (Early Session tab only).
-
-### 🔽 Expand/Collapse Results
-
-* Click the **Symbol column** (first column) on any row showing `[+] SYMBOL` to expand and view detailed daily breakdowns.
-* Click again on `[−] SYMBOL` to collapse and hide the details.
-* **No data refetching:** Expanding/collapsing uses cached data only, making it instant.
+* **Start/End Date:** Set custom date range for analysis. Use predefined buttons (1D, 3D, 5D, 1W) for quick selection.
+* **Expand/Collapse:** Click the **+** or **−** icon next to symbol names to expand/collapse detailed daily data.
+* **View Mode:** Toggle between **Detailed** (full data) and **Average** (summary statistics) views.
+* **Stock Selection:** Use **Select Stocks** button to choose symbols via manual entry or checkbox list.
 
 ---
 
@@ -391,27 +584,10 @@ A real-time "dip" scanner. Filters for symbols currently trading at least **n% b
 
 ### ⏰ Early-Session Performance
 
-Analyzes the opening cross period and tracks performance from the start value through the close.
+Analyzes the **Opening Cross (09:30-09:40)** price action and tracks performance from the **Start Value (09:40)** to close. Shows detailed daily breakdown with high/low timestamps when expanded.
 
-**Key Features:**
-
-* **Date Range Selection:** Choose Start Date and End Date (YYYY-MM-DD format). Dates automatically exclude weekends and market holidays.
-* **Preset Buttons:** Use **1D, 3D, 5D, 1W** to quickly set date ranges backward from the current trading day. These buttons update the date fields automatically.
-* **View Modes:**
-  * **Detailed:** Shows parent summary rows with expandable child rows for each trading session. Click `[+]` to see daily breakdowns.
-  * **Average:** Shows aggregated statistics per symbol (average % gain, average prices) without daily details.
-* **Symbol Selection:** 
-  * Enter symbols manually (comma-separated) in the Symbols field.
-  * Use toolbar buttons to load from CSV, clear the list, or select via checkbox dialog.
-  * If no symbols are entered, the analysis uses all symbols from the default CSV.
-
-**Analysis Logic:**
-
-* **Opening Cross:** Calculates the percentage change between the price at **09:30** and **09:40** (first available candles).
-* **Start Value:** Price at exactly **09:40** (or nearest forward candle).
-* **Close Value:** Last closing price of the trading session.
-* **% Gain:** Percentage change from Start Value to Close Value.
-* **Remarks:** Shows LOW/HIGH prices with timestamps in detailed mode, or summary LOW/HIGH in collapsed view.
+* **Expanded View:** Shows Opening Cross range, Start Value, Close Value, % Gain, and Remarks with timestamps.
+* **Collapsed View:** Shows summary with average values and simplified remarks.
 
 ### 🔁 n% Reversal Cycles
 
@@ -504,11 +680,10 @@ class BaseTab:
         self.progress_var = tk.DoubleVar(value=0)
         self.progress_label = None
         self.progress_bar = None
-        # Collapsible tree support (per-tab)
-        self.collapsible_tree = None
-        self.tree_parent_children = {}
-        self.tree_parent_symbol = {}
-        self.tree_expanded = set()
+        self.view_mode = tk.StringVar(value="detailed")  # "detailed" or "average"
+        self.expanded_items = set()  # Track which items are expanded
+        # Map Treeview item -> original symbol text (for icon updates)
+        self._item_symbol = {}
 
     def create_control_frame(self, title):
         """Create control panel"""
@@ -536,12 +711,16 @@ class BaseTab:
         self.progress_label.pack(side=tk.LEFT, padx=5)
         
         # Progress bar
+        style = ttk.Style()
+        style.configure("TProgressbar", background="#3b82f6")
+        style.map("TProgressbar", background=[("active", "#3b82f6")])
+        
         self.progress_bar = ttk.Progressbar(progress_frame,
                                             variable=self.progress_var,
                                             maximum=100,
                                             length=300,
                                             mode='determinate',
-                                            style="Normal.Horizontal.TProgressbar")
+                                            style="TProgressbar")
         self.progress_bar.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
         return progress_frame
@@ -554,35 +733,87 @@ class BaseTab:
             self.progress_label.config(text=f"Processing: {current}/{total}")
             self.frame.update_idletasks()
 
-    def reset_progress(self):
-        """Reset progress bar"""
+    def reset_progress(self, success=False):
+        """Reset progress bar, optionally show success state"""
+        if success:
+            # Show green highlight on completion
+            style = ttk.Style()
+            style.configure("Success.TProgressbar", background="#10b981")
+            self.progress_bar.config(style="Success.TProgressbar")
+            self.progress_label.config(text="✓ Complete", fg="#10b981")
+            self.frame.after(2000, self._reset_progress_normal)  # Reset after 2 seconds
+        else:
+            self.progress_var.set(0)
+            self.progress_label.config(text="Ready", fg="#1e293b")
+            self.progress_bar.config(style="TProgressbar")
+    
+    def _reset_progress_normal(self):
+        """Reset progress bar to normal state"""
         self.progress_var.set(0)
-        self.progress_label.config(text="Ready")
-        if self.progress_bar is not None:
-            self.progress_bar.config(style="Normal.Horizontal.TProgressbar")
+        self.progress_label.config(text="Ready", fg="#1e293b")
+        self.progress_bar.config(style="TProgressbar")
+    
+    def get_date_range(self):
+        """Get start and end dates from app controls"""
+        start_str = self.app.start_date_var.get()
+        end_str = self.app.end_date_var.get()
+        
+        start_date = parse_date(start_str)
+        end_date = parse_date(end_str)
+        
+        if not start_date or not end_date:
+            # Fallback to days if date parsing fails
+            days = max(1, int(self.app.duration_var.get()))
+            start_date, end_date = get_trading_days_back(days)
+        
+        return start_date, end_date
 
-    def mark_completed(self, total):
-        """Mark progress as completed and briefly show success state"""
-        if total > 0:
-            self.update_progress(total, total)
-        if self.progress_bar is not None:
-            self.progress_bar.config(style="Success.Horizontal.TProgressbar")
-        if self.progress_label is not None and total > 0:
-            self.progress_label.config(text=f"Completed: {total}/{total}")
-        self.frame.update_idletasks()
-        # Reset after short delay to keep UI responsive but clean
-        self.frame.after(700, self.reset_progress)
-
-    def create_treeview(self, columns, collapsible=False):
-        """Create results treeview with optional collapsible support"""
+    def create_treeview(self, columns, collapsible=True):
+        """Create results treeview with expand/collapse support"""
         tree_frame = tk.Frame(self.frame, bg="#f8fafc")
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 15))
         
-        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=18)
+        # Add view mode toggle
+        view_frame = tk.Frame(tree_frame, bg="#f8fafc")
+        view_frame.pack(fill=tk.X, pady=(0, 5))
         
-        for col in columns:
+        tk.Label(view_frame, text="View Mode:", bg="#f8fafc", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=5)
+        
+        detailed_btn = tk.Radiobutton(view_frame, text="Detailed", variable=self.view_mode, 
+                                      value="detailed", bg="#f8fafc", font=("Helvetica", 9),
+                                      command=self.toggle_view_mode)
+        detailed_btn.pack(side=tk.LEFT, padx=5)
+        
+        average_btn = tk.Radiobutton(view_frame, text="Average", variable=self.view_mode,
+                                     value="average", bg="#f8fafc", font=("Helvetica", 9),
+                                     command=self.toggle_view_mode)
+        average_btn.pack(side=tk.LEFT, padx=5)
+        
+        # IMPORTANT:
+        # - We use the special tree column (#0) as the ONLY "Symbol" column.
+        # - The caller still passes a "Symbol" column name in `columns[0]` for clarity.
+        # - All other columns are normal data columns.
+        if not columns:
+            raise ValueError("Treeview requires at least one column (e.g. 'Symbol').")
+
+        symbol_col_name = columns[0]
+        data_columns = columns[1:]
+
+        tree = ttk.Treeview(tree_frame, columns=data_columns, show="tree headings", height=18)
+
+        # Tree column (#0) becomes the symbol column
+        tree.column("#0", width=220, anchor=tk.W, stretch=True)
+        tree.heading("#0", text=symbol_col_name)
+
+        for col in data_columns:
             tree.heading(col, text=col)
             tree.column(col, anchor=tk.CENTER, width=150)
+        
+        # Bind click events for expand/collapse
+        tree.bind("<Button-1>", self.on_tree_click)
+        # Also update icons when items are expanded/collapsed via double-click or other methods
+        tree.bind("<<TreeviewOpen>>", self._on_item_expand)
+        tree.bind("<<TreeviewClose>>", self._on_item_collapse)
         
         scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scrollbar.set)
@@ -599,6 +830,63 @@ class BaseTab:
             tree.bind("<Button-1>", self._on_tree_click)
 
         return tree
+    
+    def on_tree_click(self, event):
+        """Handle click on treeview to toggle expand/collapse"""
+        tree = event.widget
+        region = tree.identify_region(event.x, event.y)
+        item = tree.identify_row(event.y)
+        column = tree.identify_column(event.x)
+        
+        # Only toggle when clicking the tree (symbol) column (#0).
+        # This gives an explicit, predictable click-target for "+ / −".
+        if (
+            item
+            and tree.get_children(item)
+            and region == "tree"
+            and column == "#0"
+        ):
+            is_open = bool(tree.item(item, "open"))
+            tree.item(item, open=not is_open)
+            if is_open:
+                self.expanded_items.discard(item)
+                self.update_expand_icon(tree, item, False)
+            else:
+                self.expanded_items.add(item)
+                self.update_expand_icon(tree, item, True)
+    
+    def update_expand_icon(self, tree, item, is_expanded):
+        """Update the expand/collapse icon for an item"""
+        icon = "−" if is_expanded else "+"
+        sym = self._item_symbol.get(item)
+        if not sym:
+            # Fallback: extract from current text
+            sym = tree.item(item, "text").lstrip("+− ").strip()
+            self._item_symbol[item] = sym
+        tree.item(item, text=f"{icon} {sym}")
+    
+    def _on_item_expand(self, event):
+        """Handle item expansion event"""
+        tree = event.widget
+        # Find which item was expanded by checking all items
+        for item in tree.get_children():
+            if tree.get_children(item) and tree.item(item, "open"):
+                self.expanded_items.add(item)
+                self.update_expand_icon(tree, item, True)
+    
+    def _on_item_collapse(self, event):
+        """Handle item collapse event"""
+        tree = event.widget
+        # Find which item was collapsed by checking all items
+        for item in tree.get_children():
+            if tree.get_children(item) and not tree.item(item, "open"):
+                self.expanded_items.discard(item)
+                self.update_expand_icon(tree, item, False)
+    
+    def toggle_view_mode(self):
+        """Toggle between detailed and average view modes"""
+        # This will be overridden by specific tabs if needed
+        pass
 
     def add_colored_row(self, tree, values, threshold_col=None, threshold_val=0, reverse=False):
         """Add row with color coding"""
@@ -619,17 +907,13 @@ class BaseTab:
         return item
 
     def add_parent_row(self, tree, values, threshold_col=None, threshold_val=0, reverse=False):
-        """Add a parent row for collapsible tree"""
-        # Prefix first column with [+] indicator for collapsed rows when using collapsible tree
-        display_values = list(values)
-        if tree is self.collapsible_tree and display_values:
-            raw_symbol = str(display_values[0])
-            display_values[0] = f"[+] {raw_symbol}"
-        item = tree.insert("", tk.END, values=tuple(display_values), open=False)
-        if tree is self.collapsible_tree:
-            # Track parent symbol text and initialize children list
-            self.tree_parent_symbol[item] = str(values[0])
-            self.tree_parent_children.setdefault(item, [])
+        """Add a parent row for collapsible tree with +/- icon"""
+        if not values:
+            return tree.insert("", tk.END, text="+", values=(), open=False)
+
+        symbol = str(values[0])
+        item = tree.insert("", tk.END, text=f"+ {symbol}", values=values[1:], open=False)
+        self._item_symbol[item] = symbol
         
         if threshold_col is not None and len(values) > threshold_col:
             try:
@@ -647,9 +931,12 @@ class BaseTab:
 
     def add_child_row(self, tree, parent, values):
         """Add a child row to a parent"""
-        item = tree.insert(parent, tk.END, values=values)
-        if tree is self.collapsible_tree:
-            self.tree_parent_children.setdefault(parent, []).append(item)
+        # For children, the first element of `values` is displayed under the Symbol column (#0),
+        # and the remaining values fill the data columns.
+        if not values:
+            item = tree.insert(parent, tk.END, text="", values=())
+        else:
+            item = tree.insert(parent, tk.END, text=str(values[0]), values=values[1:])
         return item
 
     def _on_tree_click(self, event):
@@ -717,16 +1004,23 @@ class SwingCounterTab(BaseTab):
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
-        symbols = self.universe.load_symbols()
+        self.expanded_items.clear()
+        # Use active_symbols if available, otherwise load from CSV
+        symbols = self.app.active_symbols if self.app.active_symbols else self.universe.load_symbols()
         total_symbols = len(symbols)
+        
+        if not symbols:
+            messagebox.showwarning("No Symbols", "Please load or select symbols first")
+            return
+        
+        start_date, end_date = self.get_date_range()
         
         for idx, sym in enumerate(symbols):
             self.update_progress(idx, total_symbols)
             try:
                 interval = self.app.interval_var.get().strip()
-                days = max(1, int(self.app.duration_var.get()))
-                period = f"{days}d"
-                data = yf.Ticker(sym).history(period=period, interval=interval)
+                # Use date range instead of period
+                data = yf.Ticker(sym).history(start=start_date, end=end_date + timedelta(days=1), interval=interval)
 
                 if data.empty:
                     continue
@@ -775,7 +1069,8 @@ class SwingCounterTab(BaseTab):
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
         
-        self.mark_completed(total_symbols)
+        self.update_progress(total_symbols, total_symbols)
+        self.reset_progress(success=True)
 
 
 class DownFromHighTab(BaseTab):
@@ -802,17 +1097,24 @@ class DownFromHighTab(BaseTab):
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
-        symbols = self.universe.load_symbols()
+        self.expanded_items.clear()
+        # Use active_symbols if available, otherwise load from CSV
+        symbols = self.app.active_symbols if self.app.active_symbols else self.universe.load_symbols()
         threshold = self.n_pct.get()
         total_symbols = len(symbols)
+        
+        if not symbols:
+            messagebox.showwarning("No Symbols", "Please load or select symbols first")
+            return
+        
+        start_date, end_date = self.get_date_range()
         
         for idx, sym in enumerate(symbols):
             self.update_progress(idx, total_symbols)
             try:
                 interval = self.app.interval_var.get().strip()
-                days = max(1, int(self.app.duration_var.get()))
-                period = f"{days}d"
-                df = yf.Ticker(sym).history(period=period, interval=interval)
+                # Use date range instead of period
+                df = yf.Ticker(sym).history(start=start_date, end=end_date + timedelta(days=1), interval=interval)
                 if df.empty:
                     continue
 
@@ -854,456 +1156,242 @@ class DownFromHighTab(BaseTab):
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
         
-        self.mark_completed(total_symbols)
+        self.update_progress(total_symbols, total_symbols)
+        self.reset_progress(success=True)
 
 
 class EarlySessionTab(BaseTab):
-    """Tab 3: Early Session Performance Analyzer"""
+    """Tab 3: Early Session Performance Analyzer with Opening Cross Analysis"""
     
     def __init__(self, notebook, universe, app):
         super().__init__(notebook, universe, app)
-        # Date range selection state
-        self.start_date_var = tk.StringVar()
-        self.end_date_var = tk.StringVar()
-        # View mode state: Detailed vs Average
-        self.view_mode_var = tk.StringVar(value="Detailed")
-        # Manual symbol selection (comma-separated)
-        self.manual_symbols_var = tk.StringVar()
-        # Cached analysis results {symbol: [record dicts]}
-        self.analysis_cache = {}
-        self._init_default_dates()
         self.build_ui()
+        self.stored_data = {}  # Store data for view mode switching
 
     def build_ui(self):
-        controls = self.create_control_frame("Early Session Performance (Opening Cross vs Close)")
-
-        # View mode toggle
-        mode_frame = tk.Frame(controls, bg="#ffffff")
-        mode_frame.grid(row=0, column=0, columnspan=5, padx=5, pady=(0, 4), sticky="w")
-        tk.Label(mode_frame, text="View:", bg="#ffffff", font=("Helvetica", 10)).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Radiobutton(
-            mode_frame,
-            text="Detailed",
-            variable=self.view_mode_var,
-            value="Detailed",
-            bg="#ffffff",
-            font=("Helvetica", 9),
-            command=self._on_view_mode_change,
-        ).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Radiobutton(
-            mode_frame,
-            text="Average",
-            variable=self.view_mode_var,
-            value="Average",
-            bg="#ffffff",
-            font=("Helvetica", 9),
-            command=self._on_view_mode_change,
-        ).pack(side=tk.LEFT, padx=(0, 4))
-
-        # Date range inputs (replace numeric Days to Analyze)
-        tk.Label(controls, text="Start Date (YYYY-MM-DD):", bg="#ffffff", font=("Helvetica", 10)).grid(row=1, column=0, padx=5, pady=2, sticky="w")
-        tk.Entry(controls, textvariable=self.start_date_var, width=12, font=("Helvetica", 10)).grid(row=1, column=1, padx=5, pady=2, sticky="w")
-
-        tk.Label(controls, text="End Date (YYYY-MM-DD):", bg="#ffffff", font=("Helvetica", 10)).grid(row=1, column=2, padx=5, pady=2, sticky="w")
-        tk.Entry(controls, textvariable=self.end_date_var, width=12, font=("Helvetica", 10)).grid(row=1, column=3, padx=5, pady=2, sticky="w")
-
-        # Predefined date buttons (1D / 3D / 5D / 1W) — update dates based on current trading day
-        preset_frame = tk.Frame(controls, bg="#ffffff")
-        preset_frame.grid(row=2, column=0, columnspan=4, pady=(4, 2), sticky="w")
-        for label, days in [("1D", 1), ("3D", 3), ("5D", 5), ("1W", 7)]:
-            tk.Button(
-                preset_frame,
-                text=label,
-                bg="#e5e7eb",
-                fg="#111827",
-                font=("Helvetica", 9),
-                relief="flat",
-                padx=8,
-                pady=3,
-                cursor="hand2",
-                command=lambda d=days: self.apply_preset_days(d),
-            ).pack(side=tk.LEFT, padx=3)
-
+        controls = self.create_control_frame("Opening Cross Analysis (09:30-09:40)")
+        
+        tk.Label(controls, text="Analyzes price action from 09:30 to 09:40 and tracks performance", 
+                bg="#ffffff", font=("Helvetica", 9), fg="#64748b").grid(row=0, column=0, columnspan=3, padx=5, pady=5)
+        
         tk.Button(controls, text="📊 Analyze", bg="#3b82f6", fg="white",
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
-                 relief="flat", cursor="hand2").grid(row=1, column=4, padx=15, pady=2, sticky="w")
-
-        # Symbol selection controls
-        symbol_frame = tk.Frame(controls, bg="#ffffff")
-        symbol_frame.grid(row=3, column=0, columnspan=5, pady=(6, 2), sticky="we")
-        symbol_frame.columnconfigure(1, weight=1)
-
-        tk.Label(symbol_frame, text="Symbols (comma separated):", bg="#ffffff", font=("Helvetica", 10)).grid(row=0, column=0, padx=5, sticky="w")
-        tk.Entry(symbol_frame, textvariable=self.manual_symbols_var, width=50, font=("Helvetica", 10)).grid(
-            row=0, column=1, padx=5, pady=2, sticky="we"
-        )
+                 relief="flat", cursor="hand2").grid(row=1, column=0, padx=15, pady=10)
         
         self.create_progress_bar()
         
-        self.tree = self.create_treeview(("Symbol", "Date", "Opening Cross", "Start Value", "Close Value", "% Gain", "Remarks"), collapsible=True)
+        # Columns for detailed view
+        self.detailed_columns = ("Symbol", "Date", "Opening Cross (09:30–09:40)", 
+                                 "Start Value (09:40)", "Close Value", "% Gain from Start", "Remarks")
+        # Columns for collapsed view
+        self.collapsed_columns = ("Symbol", "Date", "Opening Cross (09:30–09:40)",
+                                  "Start Value", "Close Value", "% Gain", "Remarks")
+        
+        self.tree = self.create_treeview(self.detailed_columns)
 
     def run(self):
-        """Analyze early-session performance over a date range with business-day handling."""
-        symbols = self._get_active_symbols()
-        if not symbols:
-            # Preserve existing behavior if the user hasn't defined an active list
-            symbols = self.universe.load_symbols()
-
-        # Parse and validate dates
-        try:
-            start_date = datetime.strptime(self.start_date_var.get().strip(), "%Y-%m-%d").date()
-            end_date = datetime.strptime(self.end_date_var.get().strip(), "%Y-%m-%d").date()
-        except ValueError:
-            messagebox.showerror("Invalid Dates", "Please enter valid Start and End dates in YYYY-MM-DD format.")
-            return
-
-        if start_date >= end_date:
-            messagebox.showerror("Invalid Range", "Start Date must be earlier than End Date.")
-            return
-
-        # Build trading calendar: business days only (skip weekends & common holidays)
-        trading_range = pd.bdate_range(start=start_date, end=end_date)
-        if trading_range.empty:
-            messagebox.showerror("No Trading Days", "The selected date range contains no valid trading days.")
-            return
-
-        # Respect Yahoo 1-minute history limits if using 1m interval
-        interval = self.app.interval_var.get().strip()
-        trading_days = [d.date() for d in trading_range]
-        if interval == "1m" and len(trading_days) > MAX_DAYS_1M:
-            trading_days = trading_days[-MAX_DAYS_1M:]
-            messagebox.showwarning(
-                "Limit Applied",
-                f"Yahoo Finance allows max {MAX_DAYS_1M} trading days for 1-minute data. "
-                f"Using the most recent {MAX_DAYS_1M} days in the selected range.",
-            )
-
-        if not trading_days:
-            messagebox.showerror("No Trading Days", "No valid trading days after applying provider limits.")
-            return
-
-        total_symbols = len(symbols)
-        self.analysis_cache = {}
+        """Run Opening Cross analysis"""
         self.tree.delete(*self.tree.get_children())
-
+        self.expanded_items.clear()
+        # Use active_symbols if available, otherwise load from CSV
+        symbols = self.app.active_symbols if self.app.active_symbols else self.universe.load_symbols()
+        total_symbols = len(symbols)
+        
+        if not symbols:
+            messagebox.showwarning("No Symbols", "Please load symbols first")
+            return
+        
+        start_date, end_date = self.get_date_range()
+        self.stored_data = {}
+        
         for idx, sym in enumerate(symbols):
             self.update_progress(idx, total_symbols)
             try:
-                df = yf.Ticker(sym).history(
-                    start=trading_days[0],
-                    end=trading_days[-1] + timedelta(days=1),
-                    interval=interval,
-                )
-
+                interval = self.app.interval_var.get().strip()
+                
+                # Fetch data using date range
+                ticker = yf.Ticker(sym)
+                df = ticker.history(start=start_date, end=end_date + timedelta(days=1), interval=interval)
+                
                 if df.empty:
                     continue
-
+                
                 df["date"] = df.index.date
                 daily_records = []
-
-                for d, day in df.groupby("date"):
-                    if len(day) < 2:
+                
+                for d, day_df in df.groupby("date"):
+                    # Filter for market hours (09:30 - 16:00)
+                    day_df = day_df.between_time("09:30", "16:00")
+                    
+                    if len(day_df) < 11:  # Need at least 11 minutes (09:30-09:40)
                         continue
-
-                    # Opening cross window and start value at/after 09:40
-                    times = day.index.time
-                    t_0930 = datetime.strptime("09:30", "%H:%M").time()
-                    t_0940 = datetime.strptime("09:40", "%H:%M").time()
-
-                    # Price at/after 09:30 for opening cross baseline
-                    oc_candidates = [i for i, t in enumerate(times) if t >= t_0930]
-                    if not oc_candidates:
+                    
+                    # Opening Cross: 09:30-09:40 (first 10 minutes, indices 0-9)
+                    opening_cross = day_df.iloc[:10]
+                    if len(opening_cross) < 10:
                         continue
-                    oc_idx = oc_candidates[0]
-                    oc_price = float(day.iloc[oc_idx]["Close"])
-
-                    # Start value at/after 09:40
-                    start_candidates = [i for i, t in enumerate(times) if t >= t_0940]
-                    if not start_candidates:
-                        continue
-                    start_idx = start_candidates[0]
-                    start_row = day.iloc[start_idx]
-                    start_price = float(start_row["Close"])
-
-                    # Opening cross % change between 09:30 and 09:40
-                    open_pct = (start_price - oc_price) / oc_price * 100 if oc_price != 0 else 0.0
-
-                    # Close vs start % gain
-                    close_price = float(day["Close"].iloc[-1])
-                    pct = (close_price - start_price) / start_price * 100 if start_price != 0 else 0.0
-
-                    # Direction based on post-09:40 movement relative to start price
-                    # If any price AFTER 09:40 goes above start_price -> HIGH (green)
-                    # Otherwise, if any price AFTER 09:40 goes below start_price -> LOW (red)
-                    after_start = day.iloc[start_idx:]
-                    seg_max = float(after_start["High"].max())
-                    seg_min = float(after_start["Low"].min())
-                    if seg_max > start_price:
-                        direction = "HIGH"
-                    elif seg_min < start_price:
-                        direction = "LOW"
-                    else:
-                        direction = "NEUTRAL"
-
-                    # Session low/high with timestamps
-                    low_idx = day["Low"].idxmin()
-                    high_idx = day["High"].idxmax()
-                    low_price = float(day.loc[low_idx]["Low"])
-                    high_price = float(day.loc[high_idx]["High"])
-                    low_ts = low_idx.strftime("%H:%M")
-                    high_ts = high_idx.strftime("%H:%M")
-
-                    daily_records.append(
-                        {
-                            "date": d,
-                            "start": start_price,
-                            "close": close_price,
-                            "pct": pct,
-                            "open_pct": open_pct,
-                            "direction": direction,
-                            "low": low_price,
-                            "low_ts": low_ts,
-                            "high": high_price,
-                            "high_ts": high_ts,
-                        }
-                    )
-
+                    
+                    open_price = opening_cross.iloc[0]["Open"]
+                    opening_high = opening_cross["High"].max()
+                    opening_low = opening_cross["Low"].min()
+                    opening_range = opening_high - opening_low
+                    opening_range_pct = (opening_range / open_price * 100) if open_price > 0 else 0
+                    
+                    # Start Value: Price at exactly 09:40 (index 10)
+                    start_value = day_df.iloc[10]["Close"] if len(day_df) > 10 else day_df.iloc[-1]["Close"]
+                    
+                    # Close Value: Last price of the day
+                    close_value = day_df.iloc[-1]["Close"]
+                    
+                    # % Gain from Start Value
+                    pct_gain = ((close_value - start_value) / start_value * 100) if start_value > 0 else 0
+                    
+                    # Find high and low with timestamps
+                    day_high = day_df["High"].max()
+                    day_low = day_df["Low"].min()
+                    high_time = day_df[day_df["High"] == day_high].index[0].strftime("%H:%M")
+                    low_time = day_df[day_df["Low"] == day_low].index[0].strftime("%H:%M")
+                    
+                    daily_records.append({
+                        'date': d,
+                        'opening_cross': f"${opening_low:.2f}-${opening_high:.2f} ({opening_range_pct:.2f}%)",
+                        'opening_low': float(opening_low),
+                        'opening_high': float(opening_high),
+                        'opening_range_pct': float(opening_range_pct),
+                        'start_value': start_value,
+                        'close_value': close_value,
+                        'pct_gain': pct_gain,
+                        'day_high': day_high,
+                        'day_low': day_low,
+                        'high_time': high_time,
+                        'low_time': low_time
+                    })
+                
                 if not daily_records:
                     continue
-
-                self.analysis_cache[sym] = daily_records
-
+                
+                # Store data for view mode switching
+                self.stored_data[sym] = daily_records
+                
+                # Calculate summary/averages
+                avg_pct_gain = sum(r['pct_gain'] for r in daily_records) / len(daily_records)
+                avg_start = sum(r['start_value'] for r in daily_records) / len(daily_records)
+                avg_close = sum(r['close_value'] for r in daily_records) / len(daily_records)
+                avg_opening_pct = sum(r['opening_range_pct'] for r in daily_records) / len(daily_records)
+                avg_day_high = sum(r['day_high'] for r in daily_records) / len(daily_records)
+                avg_day_low = sum(r['day_low'] for r in daily_records) / len(daily_records)
+                
+                # Determine if mostly HIGH or LOW in collapsed view
+                positive_days = sum(1 for r in daily_records if r['pct_gain'] > 0)
+                negative_days = sum(1 for r in daily_records if r['pct_gain'] < 0)
+                # Collapsed summary remark: show only LOW or HIGH (NO timestamps)
+                if avg_pct_gain >= 0:
+                    summary_remark = f"HIGH: ${avg_day_high:.2f}"
+                else:
+                    summary_remark = f"LOW: ${avg_day_low:.2f}"
+                
+                # Add parent row (collapsed view)
+                parent_values = (
+                    sym,
+                    "SUMMARY",
+                    f"Avg cross: {avg_opening_pct:.2f}%",
+                    f"${avg_start:.2f}",
+                    f"${avg_close:.2f}",
+                    f"{avg_pct_gain:.2f}%",
+                    summary_remark
+                )
+                
+                parent = self.add_parent_row(self.tree, parent_values, 5, 0)
+                
+                # Add child rows (expanded view) - hidden by default
+                for record in daily_records:
+                    # Detailed remarks with timestamps
+                    remarks = f"LOW: ${record['day_low']:.2f} @ {record['low_time']} | HIGH: ${record['day_high']:.2f} @ {record['high_time']}"
+                    
+                    child_values = (
+                        str(record['date']),
+                        record['opening_cross'],
+                        f"${record['start_value']:.2f}",
+                        f"${record['close_value']:.2f}",
+                        f"{record['pct_gain']:.2f}%",
+                        remarks
+                    )
+                    
+                    # Child rows live under the parent symbol; keep Symbol column empty.
+                    child = self.add_child_row(self.tree, parent, ("",) + child_values)
+                    
+                    # Color code based on % gain
+                    if record['pct_gain'] > 0:
+                        self.tree.item(child, tags=('positive',))
+                    elif record['pct_gain'] < 0:
+                        self.tree.item(child, tags=('negative',))
+                
+                # Configure color tags
+                self.tree.tag_configure('positive', background='#dcfce7')
+                self.tree.tag_configure('negative', background='#fee2e2')
+                
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
-
-        # Render results from cache according to the current view mode
-        self._render_results()
-        self.mark_completed(total_symbols)
-
-    def _init_default_dates(self):
-        """Initialize start/end date fields based on the current trading day."""
-        today = datetime.now().date()
-        # Current trading day = last business day on or before today
-        current_trading = pd.bdate_range(end=today, periods=1)[0].date()
-        # Default: last 5 business days ending at current trading day
-        bdays = pd.bdate_range(end=current_trading, periods=5)
-        self.start_date_var.set(bdays[0].date().strftime("%Y-%m-%d"))
-        self.end_date_var.set(bdays[-1].date().strftime("%Y-%m-%d"))
-
-    def apply_preset_days(self, num_days):
-        """Apply a backward-looking preset (1D/3D/5D/1W) from the current trading day.
-
-        This updates only the Start/End date fields; it does NOT trigger analysis automatically.
-        """
-        today = datetime.now().date()
-        # Anchor on current trading day (last business day up to today)
-        current_trading = pd.bdate_range(end=today, periods=1)[0].date()
-        bdays = pd.bdate_range(end=current_trading, periods=num_days)
-        if bdays.empty:
-            return
-        self.start_date_var.set(bdays[0].date().strftime("%Y-%m-%d"))
-        self.end_date_var.set(bdays[-1].date().strftime("%Y-%m-%d"))
-
-    def _get_active_symbols(self):
-        """Return the current active symbol list, deduplicated and uppercased."""
-        raw = self.manual_symbols_var.get().strip()
-        if not raw:
-            return []
-        parts = [p.strip().upper() for p in raw.split(",") if p.strip()]
-        seen = set()
-        ordered = []
-        for p in parts:
-            if p not in seen:
-                seen.add(p)
-                ordered.append(p)
-        return ordered
-
-    def _load_default_symbols(self):
-        """Load symbols from the default CSV into the manual input (does not modify CSV)."""
-        symbols = self.universe.load_symbols()
-        if not symbols:
-            return
-        self.manual_symbols_var.set(", ".join(sorted(set(symbols))))
-
-    def _clear_active_symbols(self):
-        """Clear active symbol list without changing the CSV on disk."""
-        self.manual_symbols_var.set("")
-
-    def _open_symbol_selector(self):
-        """Checkbox-based symbol selector backed by CSV, kept in sync with manual input."""
-        csv_symbols = self.universe.load_symbols()
-        if not csv_symbols:
-            return
-
-        current = set(self._get_active_symbols())
-
-        win = tk.Toplevel(self.frame)
-        win.title("Select Symbols from CSV")
-        win.geometry("320x420")
-        win.configure(bg="#f8fafc")
-
-        container = tk.Frame(win, bg="#f8fafc")
-        container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        canvas = tk.Canvas(container, bg="#f8fafc", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=canvas.yview)
-        inner = tk.Frame(canvas, bg="#f8fafc")
-
-        inner.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
-        )
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        vars_map = {}
-        for sym in sorted(csv_symbols):
-            var = tk.BooleanVar(value=(sym in current))
-            chk = tk.Checkbutton(
-                inner,
-                text=sym,
-                variable=var,
-                bg="#f8fafc",
-                anchor="w",
-            )
-            chk.pack(fill=tk.X, anchor="w")
-            vars_map[sym] = var
-
-        def apply_selection():
-            selected = [s for s, v in vars_map.items() if v.get()]
-            manual = self._get_active_symbols()
-            merged = manual + selected
-            seen = set()
-            final = []
-            for s in merged:
-                if s not in seen:
-                    seen.add(s)
-                    final.append(s)
-            self.manual_symbols_var.set(", ".join(final))
-            win.destroy()
-
-        tk.Button(
-            win,
-            text="Apply",
-            command=apply_selection,
-            bg="#3b82f6",
-            fg="white",
-            font=("Helvetica", 10, "bold"),
-            relief="flat",
-            padx=12,
-            pady=6,
-        ).pack(pady=(4, 10))
-
-    def _on_view_mode_change(self):
-        """Re-render from cache when switching Detailed/Average modes without refetching data."""
-        self._render_results()
-
-    def _render_results(self):
-        """Render TreeView from cached analysis for Detailed/Average modes."""
-        # Clear rows and reset collapse tracking
+        
+        self.update_progress(total_symbols, total_symbols)
+        self.reset_progress(success=True)
+    
+    def toggle_view_mode(self):
+        """Switch between detailed and average view modes"""
+        # Rebuild from stored data (no refetch) for deterministic results.
         self.tree.delete(*self.tree.get_children())
-        self.tree_parent_children = {}
-        self.tree_parent_symbol = {}
-        self.tree_expanded = set()
+        self.expanded_items.clear()
 
-        if not self.analysis_cache:
-            return
-
-        detailed = self.view_mode_var.get() == "Detailed"
-
-        for sym, records in self.analysis_cache.items():
-            if not records:
+        for sym, daily_records in self.stored_data.items():
+            if not daily_records:
                 continue
 
-            avg_pct = sum(r["pct"] for r in records) / len(records)
-            avg_open_pct = sum(r["open_pct"] for r in records) / len(records)
-            avg_start = sum(r["start"] for r in records) / len(records)
-            avg_close = sum(r["close"] for r in records) / len(records)
+            avg_pct_gain = sum(r['pct_gain'] for r in daily_records) / len(daily_records)
+            avg_start = sum(r['start_value'] for r in daily_records) / len(daily_records)
+            avg_close = sum(r['close_value'] for r in daily_records) / len(daily_records)
+            avg_opening_pct = sum(r['opening_range_pct'] for r in daily_records) / len(daily_records)
+            avg_day_high = sum(r['day_high'] for r in daily_records) / len(daily_records)
+            avg_day_low = sum(r['day_low'] for r in daily_records) / len(daily_records)
 
-            # Collapsed remarks: show only LOW or only HIGH (no timestamps)
-            min_low = min(records, key=lambda r: r["low"])
-            max_high = max(records, key=lambda r: r["high"])
-            if abs(min_low["low"] - avg_start) > abs(max_high["high"] - avg_start):
-                collapsed_remark = f"LOW: {min_low['low']:.2f}"
+            if avg_pct_gain >= 0:
+                summary_remark = f"HIGH: ${avg_day_high:.2f}"
             else:
-                collapsed_remark = f"HIGH: {max_high['high']:.2f}"
+                summary_remark = f"LOW: ${avg_day_low:.2f}"
 
-            if detailed:
-                date_label = (
-                    f"{records[0]['date']} → {records[-1]['date']}"
-                    if len(records) > 1
-                    else str(records[0]["date"])
-                )
-            else:
-                date_label = f"{len(records)} sessions"
-
-            # Determine overall direction for the summary row
-            high_days = [r for r in records if r.get("direction") == "HIGH"]
-            low_days = [r for r in records if r.get("direction") == "LOW"]
-            if high_days and not low_days:
-                summary_direction = "HIGH"
-            elif low_days and not high_days:
-                summary_direction = "LOW"
-            elif avg_pct > 0:
-                summary_direction = "HIGH"
-            elif avg_pct < 0:
-                summary_direction = "LOW"
-            else:
-                summary_direction = "NEUTRAL"
-
-            parent = self.add_parent_row(
-                self.tree,
-                (
-                    sym,
-                    date_label,
-                    f"{avg_open_pct:.2f}%",
-                    f"{avg_start:.2f}",
-                    f"{avg_close:.2f}",
-                    f"{avg_pct:.2f}%",
-                    collapsed_remark,
-                ),
-                threshold_col=5,
-                threshold_val=0,
-                reverse=False,
+            parent_values = (
+                sym,
+                "SUMMARY",
+                f"Avg cross: {avg_opening_pct:.2f}%",
+                f"${avg_start:.2f}",
+                f"${avg_close:.2f}",
+                f"{avg_pct_gain:.2f}%",
+                summary_remark
             )
-            # Override default % gain-based coloring with explicit HIGH/LOW/NEUTRAL direction
-            self._color_item_by_direction(self.tree, parent, summary_direction)
+            parent = self.add_parent_row(self.tree, parent_values, 5, 0)
 
-            if not detailed:
-                # Average mode shows only one row per symbol
+            if self.view_mode.get() == "average":
+                # Average mode: keep collapsed-only rows (no children)
                 continue
 
-            for r in records:
-                remarks = f"LOW: {r['low']:.2f} @ {r['low_ts']} | HIGH: {r['high']:.2f} @ {r['high_ts']}"
-                child = self.add_child_row(
-                    self.tree,
-                    parent,
-                    (
-                        f"  {r['date']}",
-                        str(r["date"]),
-                        f"{r['open_pct']:.2f}%",
-                        f"{r['start']:.2f}",
-                        f"{r['close']:.2f}",
-                        f"{r['pct']:.2f}%",
-                        remarks,
-                    ),
+            for record in daily_records:
+                remarks = f"LOW: ${record['day_low']:.2f} @ {record['low_time']} | HIGH: ${record['day_high']:.2f} @ {record['high_time']}"
+                child_values = (
+                    "",  # keep Symbol column empty for children
+                    str(record['date']),
+                    record['opening_cross'],
+                    f"${record['start_value']:.2f}",
+                    f"${record['close_value']:.2f}",
+                    f"{record['pct_gain']:.2f}%",
+                    remarks
                 )
-                # Color each session row according to its direction (HIGH=green, LOW=red)
-                self._color_item_by_direction(self.tree, child, r.get("direction", "NEUTRAL"))
+                child = self.add_child_row(self.tree, parent, child_values)
+                if record['pct_gain'] > 0:
+                    self.tree.item(child, tags=('positive',))
+                elif record['pct_gain'] < 0:
+                    self.tree.item(child, tags=('negative',))
 
-    def _color_item_by_direction(self, tree, item, direction):
-        """Apply HIGH/LOW/NEUTRAL color convention to a tree item."""
-        if direction == "HIGH":
-            color = "#dcfce7"  # green
-        elif direction == "LOW":
-            color = "#fee2e2"  # red
-        else:
-            color = "#fef3c7"  # neutral/amber
-        tree.item(item, tags=(color,))
-        tree.tag_configure(color, background=color)
+        self.tree.tag_configure('positive', background='#dcfce7')
+        self.tree.tag_configure('negative', background='#fee2e2')
 
 
 class ReversalCycleTab(BaseTab):
@@ -1312,23 +1400,20 @@ class ReversalCycleTab(BaseTab):
     def __init__(self, notebook, universe , app):
         super().__init__(notebook, universe, app)
         self.n_pct = tk.DoubleVar(value=2.0)
-        self.days = tk.IntVar(value=5)
         self.build_ui()
 
     def build_ui(self):
-        controls = self.create_control_frame("Reversal Cycle Settings (Max 7 days)")
+        controls = self.create_control_frame("Reversal Cycle Settings")
         
         tk.Label(controls, text="Reversal %:", bg="#ffffff", font=("Helvetica", 10)).grid(row=0, column=0, padx=5)
         tk.Entry(controls, textvariable=self.n_pct, width=8, font=("Helvetica", 10)).grid(row=0, column=1, padx=5)
         
-        tk.Label(controls, text="Days:", bg="#ffffff", font=("Helvetica", 10)).grid(row=0, column=2, padx=(15, 5))
-        spinbox = tk.Spinbox(controls, from_=1, to=MAX_DAYS_1M, textvariable=self.days,
-                            width=8, font=("Helvetica", 10))
-        spinbox.grid(row=0, column=3, padx=5)
+        tk.Label(controls, text="(Date range set in toolbar)", bg="#ffffff", font=("Helvetica", 9), 
+                fg="#64748b").grid(row=0, column=2, padx=(15, 5))
         
         tk.Button(controls, text="🔄 Count Cycles", bg="#ef4444", fg="white",
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
-                 relief="flat", cursor="hand2").grid(row=0, column=4, padx=15)
+                 relief="flat", cursor="hand2").grid(row=0, column=3, padx=15)
         
         self.create_progress_bar()
         
@@ -1336,19 +1421,23 @@ class ReversalCycleTab(BaseTab):
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
-        symbols = self.universe.load_symbols()
-        days = min(self.days.get(), MAX_DAYS_1M)
+        self.expanded_items.clear()
+        # Use active_symbols if available, otherwise load from CSV
+        symbols = self.app.active_symbols if self.app.active_symbols else self.universe.load_symbols()
         total_symbols = len(symbols)
         
-        if self.days.get() > MAX_DAYS_1M:
-            messagebox.showwarning("Limit Exceeded",
-                                  f"Yahoo Finance allows max {MAX_DAYS_1M} days for 1-minute data. Using {MAX_DAYS_1M} days.")
+        if not symbols:
+            messagebox.showwarning("No Symbols", "Please load or select symbols first")
+            return
+        
+        start_date, end_date = self.get_date_range()
         
         for idx, sym in enumerate(symbols):
             self.update_progress(idx, total_symbols)
             try:
                 interval = self.app.interval_var.get().strip()
-                df = yf.Ticker(sym).history(period=f"{days}d", interval=interval)
+                # Use date range instead of period
+                df = yf.Ticker(sym).history(start=start_date, end=end_date + timedelta(days=1), interval=interval)
 
                 if df.empty:
                     continue
@@ -1403,7 +1492,8 @@ class ReversalCycleTab(BaseTab):
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
         
-        self.mark_completed(total_symbols)
+        self.update_progress(total_symbols, total_symbols)
+        self.reset_progress(success=True)
 
 
 
