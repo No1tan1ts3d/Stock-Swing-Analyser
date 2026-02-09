@@ -111,11 +111,7 @@ class StockAnalysisApp:
         self.root.title("Intraday Stock Analysis Suite")
         self.root.geometry("1400x800")
         self.root.configure(bg="#f8fafc")
-
-        # Notebook / tab tracking for cross-tab toolbar actions
-        self.notebook = None
-        self.tabs = []
-
+        
         self.universe = StockUniverse()
         # Initialize active_symbols with loaded symbols
         self.active_symbols = self.universe.load_symbols()
@@ -138,18 +134,6 @@ class StockAnalysisApp:
         """Configure ttk styles"""
         style = ttk.Style()
         style.theme_use('clam')
-        
-        # Progress bar styles
-        style.configure(
-            "Normal.Horizontal.TProgressbar",
-            troughcolor="#e5e7eb",
-            background="#3b82f6",
-        )
-        style.configure(
-            "Success.Horizontal.TProgressbar",
-            troughcolor="#e5e7eb",
-            background="#22c55e",
-        )
         
         # Treeview styling
         style.configure("Treeview",
@@ -206,7 +190,7 @@ class StockAnalysisApp:
         ]
         
         for text, command, color in buttons:
-            tk.Button(btn_frame_left,
+            tk.Button(btn_frame,
                      text=text,
                      command=command,
                      bg=color,
@@ -409,8 +393,6 @@ class StockAnalysisApp:
         """Create analysis tabs"""
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        self.notebook = notebook
-        self.tabs = []
         
         tabs = [
             (SwingCounterTab, "🔄 Swing Counter"),
@@ -421,46 +403,7 @@ class StockAnalysisApp:
         
         for TabClass, label in tabs:
             tab = TabClass(notebook, self.universe, self)
-            self.tabs.append(tab)
             notebook.add(tab.frame, text=label)
-
-    def get_current_tab(self):
-        """Return the currently selected tab instance, if any."""
-        if self.notebook is None:
-            return None
-        current_id = self.notebook.select()
-        for tab in self.tabs:
-            if str(tab.frame) == current_id:
-                return tab
-        return None
-
-    # Toolbar symbol control delegates (primarily for EarlySessionTab)
-    def toolbar_load_default_symbols(self):
-        tab = self.get_current_tab()
-        try:
-            from_types = (EarlySessionTab,)
-        except NameError:
-            from_types = ()
-        if tab is not None and isinstance(tab, from_types):
-            tab._load_default_symbols()
-
-    def toolbar_clear_symbols(self):
-        tab = self.get_current_tab()
-        try:
-            from_types = (EarlySessionTab,)
-        except NameError:
-            from_types = ()
-        if tab is not None and isinstance(tab, from_types):
-            tab._clear_active_symbols()
-
-    def toolbar_open_symbol_selector(self):
-        tab = self.get_current_tab()
-        try:
-            from_types = (EarlySessionTab,)
-        except NameError:
-            from_types = ()
-        if tab is not None and isinstance(tab, from_types):
-            tab._open_symbol_selector()
 
     def upload_csv(self):
         """Upload CSV file with stock symbols"""
@@ -574,13 +517,9 @@ class StockAnalysisApp:
 
 Tracks intraday price swings based on your custom **Swing %**. It identifies moves that deviate from the last reference point by your specified threshold using the selected interval.
 
-* Results show parent rows with summary statistics and expandable child rows for daily breakdowns.
-
 ### 📉 n% Down From High
 
 A real-time "dip" scanner. Filters for symbols currently trading at least **n% below** their daily high. Perfect for spotting intraday pullbacks.
-
-* Results show parent rows with average metrics and expandable child rows for daily occurrences.
 
 ### ⏰ Early-Session Performance
 
@@ -593,8 +532,6 @@ Analyzes the **Opening Cross (09:30-09:40)** price action and tracks performance
 
 Identifies "ping-pong" price action. Detects completed cycles where the price moves up by **n%** and then fully reverses by **n%** (or vice versa).
 
-* Results show parent rows with total cycles and expandable child rows for daily cycle counts.
-
 ---
 
 ## 💡 Pro Tips
@@ -602,8 +539,6 @@ Identifies "ping-pong" price action. Detects completed cycles where the price mo
 * **Avoid Data Gaps:** If you need a longer history, switch to **5m** or **15m** intervals to bypass 1-minute limitations.
 * **Blank Results?** Not all tickers support sub-minute data. If a chart is empty, the ticker likely doesn't provide data for that specific interval.
 * **Stay Within Limits:** Keep the **Days** setting low when using the **1m** interval to prevent fetch errors.
-* **View Mode Switching:** In Early Session tab, switching between Detailed and Average modes is instant—no data refetching required.
-* **Progress Bar:** The progress bar turns green when analysis completes successfully, then resets automatically.
 
 ---
 """
@@ -820,15 +755,7 @@ class BaseTab:
         
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        if collapsible:
-            # Initialize mapping for this tab/tree
-            self.collapsible_tree = tree
-            self.tree_parent_children = {}
-            self.tree_parent_symbol = {}
-            self.tree_expanded = set()
-            tree.bind("<Button-1>", self._on_tree_click)
-
+        
         return tree
     
     def on_tree_click(self, event):
@@ -939,46 +866,6 @@ class BaseTab:
             item = tree.insert(parent, tk.END, text=str(values[0]), values=values[1:])
         return item
 
-    def _on_tree_click(self, event):
-        """Handle click on treeview to toggle expand/collapse via [+]/[-]."""
-        if self.collapsible_tree is None:
-            return
-        tree = self.collapsible_tree
-        item = tree.identify_row(event.y)
-        column = tree.identify_column(event.x)
-        # Only toggle when clicking the first (symbol) column on a parent row
-        if not item or column != "#1" or item not in self.tree_parent_children:
-            return
-        self._toggle_parent_row(tree, item)
-
-    def _toggle_parent_row(self, tree, parent):
-        """Toggle a single parent row's expanded/collapsed state without refetching data."""
-        children = self.tree_parent_children.get(parent, [])
-        if not children:
-            return
-
-        values = list(tree.item(parent, "values"))
-        # Recover raw symbol from stored mapping
-        raw_symbol = self.tree_parent_symbol.get(parent, str(values[0]))
-
-        if parent in self.tree_expanded:
-            # Collapse: detach children and show [+]
-            for child in children:
-                tree.detach(child)
-            self.tree_expanded.remove(parent)
-            if values:
-                values[0] = f"[+] {raw_symbol}"
-            tree.item(parent, values=tuple(values))
-        else:
-            # Expand: reattach children directly below parent and show [−]
-            index = list(tree.get_children("")).index(parent)
-            for offset, child in enumerate(children, start=1):
-                tree.reattach(child, "", index + offset)
-            self.tree_expanded.add(parent)
-            if values:
-                values[0] = f"[−] {raw_symbol}"
-            tree.item(parent, values=tuple(values))
-
 
 class SwingCounterTab(BaseTab):
     """Tab 1: Daily Stock Swing Counter"""
@@ -1000,7 +887,7 @@ class SwingCounterTab(BaseTab):
         
         self.create_progress_bar()
         
-        self.tree = self.create_treeview(("Symbol", "Up Swings", "Down Swings", "Total Swings", "Avg Daily"), collapsible=True)
+        self.tree = self.create_treeview(("Symbol", "Up Swings", "Down Swings", "Total Swings", "Avg Daily"))
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
@@ -1093,7 +980,7 @@ class DownFromHighTab(BaseTab):
         
         self.create_progress_bar()
         
-        self.tree = self.create_treeview(("Symbol", "Current Price", "Day High", "% Down", "Avg %"), collapsible=True)
+        self.tree = self.create_treeview(("Symbol", "Current Price", "Day High", "% Down", "Avg %"))
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
@@ -1165,13 +1052,13 @@ class EarlySessionTab(BaseTab):
     
     def __init__(self, notebook, universe, app):
         super().__init__(notebook, universe, app)
-        self.build_ui()
         self.stored_data = {}  # Store data for view mode switching
+        self.build_ui()
 
     def build_ui(self):
-        controls = self.create_control_frame("Opening Cross Analysis (09:30-09:40)")
+        controls = self.create_control_frame("9:40am Anchor Analysis")
         
-        tk.Label(controls, text="Analyzes price action from 09:30 to 09:40 and tracks performance", 
+        tk.Label(controls, text="Anchors at 09:40am, then compares post-9:40 highs/lows vs that price", 
                 bg="#ffffff", font=("Helvetica", 9), fg="#64748b").grid(row=0, column=0, columnspan=3, padx=5, pady=5)
         
         tk.Button(controls, text="📊 Analyze", bg="#3b82f6", fg="white",
@@ -1180,21 +1067,60 @@ class EarlySessionTab(BaseTab):
         
         self.create_progress_bar()
         
-        # Columns for detailed view
-        self.detailed_columns = ("Symbol", "Date", "Opening Cross (09:30–09:40)", 
-                                 "Start Value (09:40)", "Close Value", "% Gain from Start", "Remarks")
-        # Columns for collapsed view
-        self.collapsed_columns = ("Symbol", "Date", "Opening Cross (09:30–09:40)",
-                                  "Start Value", "Close Value", "% Gain", "Remarks")
-        
-        self.tree = self.create_treeview(self.detailed_columns)
+        # Unified column model so we can show different subsets per view mode.
+        # Average view: Symbol | Date | Price at 9:40 | Indication | % Gain | Remarks
+        # Detailed view: Symbol | Date | Price at 9:40 | Indication | Highest value | Lowest value | Direction | % Gain
+        self.columns = (
+            "Symbol",
+            "Date",
+            "Price at 9:40am",
+            "Indication",
+            "Highest value",
+            "Lowest value",
+            "Direction",
+            "% Gain",
+            "Remarks",
+        )
+        self.tree = self.create_treeview(self.columns)
+
+        # Direction-based styling (green for HIGH, red for LOW)
+        self.tree.tag_configure(
+            "dir_high",
+            background="#dcfce7",  # greenish
+            foreground="#065f46",
+        )
+        self.tree.tag_configure(
+            "dir_low",
+            background="#fee2e2",  # reddish
+            foreground="#991b1b",
+        )
+
+    def _validate_interval(self):
+        """
+        Ensure we are using a 1-minute or 5-minute interval so that 09:40am
+        is properly captured.
+        """
+        interval = self.app.interval_var.get().strip()
+        if interval not in ("1m", "5m"):
+            messagebox.showwarning(
+                "Interval Adjusted",
+                "Early-Session analysis requires a 1m or 5m interval. "
+                "Switching interval to 1m.",
+            )
+            interval = "1m"
+            self.app.interval_var.set(interval)
+        return interval
 
     def run(self):
-        """Run Opening Cross analysis"""
-        self.tree.delete(*self.tree.get_children())
-        self.expanded_items.clear()
+        """Run 9:40am anchor analysis for the active symbol universe."""
         # Use active_symbols if available, otherwise load from CSV
         symbols = self.app.active_symbols if self.app.active_symbols else self.universe.load_symbols()
+        self._run_analysis(symbols)
+
+    def _run_analysis(self, symbols):
+        """Core analysis routine shared by normal and sample-test runs."""
+        self.tree.delete(*self.tree.get_children())
+        self.expanded_items.clear()
         total_symbols = len(symbols)
         
         if not symbols:
@@ -1203,12 +1129,12 @@ class EarlySessionTab(BaseTab):
         
         start_date, end_date = self.get_date_range()
         self.stored_data = {}
+
+        interval = self._validate_interval()
         
         for idx, sym in enumerate(symbols):
             self.update_progress(idx, total_symbols)
             try:
-                interval = self.app.interval_var.get().strip()
-                
                 # Fetch data using date range
                 ticker = yf.Ticker(sym)
                 df = ticker.history(start=start_date, end=end_date + timedelta(days=1), interval=interval)
@@ -1220,178 +1146,204 @@ class EarlySessionTab(BaseTab):
                 daily_records = []
                 
                 for d, day_df in df.groupby("date"):
-                    # Filter for market hours (09:30 - 16:00)
+                    # Filter for regular market hours (09:30 - 16:00)
                     day_df = day_df.between_time("09:30", "16:00")
-                    
-                    if len(day_df) < 11:  # Need at least 11 minutes (09:30-09:40)
+
+                    if day_df.empty:
                         continue
-                    
-                    # Opening Cross: 09:30-09:40 (first 10 minutes, indices 0-9)
-                    opening_cross = day_df.iloc[:10]
-                    if len(opening_cross) < 10:
+
+                    # Anchor price at exactly 09:40am
+                    anchor_bar = day_df.between_time("09:40", "09:40")
+                    if anchor_bar.empty:
+                        # If 09:40 bar is missing (e.g. data gaps), skip this day
                         continue
-                    
-                    open_price = opening_cross.iloc[0]["Open"]
-                    opening_high = opening_cross["High"].max()
-                    opening_low = opening_cross["Low"].min()
-                    opening_range = opening_high - opening_low
-                    opening_range_pct = (opening_range / open_price * 100) if open_price > 0 else 0
-                    
-                    # Start Value: Price at exactly 09:40 (index 10)
-                    start_value = day_df.iloc[10]["Close"] if len(day_df) > 10 else day_df.iloc[-1]["Close"]
-                    
-                    # Close Value: Last price of the day
-                    close_value = day_df.iloc[-1]["Close"]
-                    
-                    # % Gain from Start Value
-                    pct_gain = ((close_value - start_value) / start_value * 100) if start_value > 0 else 0
-                    
-                    # Find high and low with timestamps
-                    day_high = day_df["High"].max()
-                    day_low = day_df["Low"].min()
-                    high_time = day_df[day_df["High"] == day_high].index[0].strftime("%H:%M")
-                    low_time = day_df[day_df["Low"] == day_low].index[0].strftime("%H:%M")
-                    
-                    daily_records.append({
-                        'date': d,
-                        'opening_cross': f"${opening_low:.2f}-${opening_high:.2f} ({opening_range_pct:.2f}%)",
-                        'opening_low': float(opening_low),
-                        'opening_high': float(opening_high),
-                        'opening_range_pct': float(opening_range_pct),
-                        'start_value': start_value,
-                        'close_value': close_value,
-                        'pct_gain': pct_gain,
-                        'day_high': day_high,
-                        'day_low': day_low,
-                        'high_time': high_time,
-                        'low_time': low_time
-                    })
+
+                    anchor_ts = anchor_bar.index[0]
+                    price_940 = anchor_bar["Close"].iloc[0]
+
+                    # Post-9:40 session (including the 09:40 bar)
+                    post_df = day_df[day_df.index >= anchor_ts]
+                    if post_df.empty:
+                        continue
+
+                    post_high = post_df["High"].max()
+                    post_low = post_df["Low"].min()
+
+                    # Track timestamps for highest and lowest post-9:40 values
+                    high_row = post_df[post_df["High"] == post_high].iloc[0]
+                    low_row = post_df[post_df["Low"] == post_low].iloc[0]
+                    high_time = high_row.name.strftime("%H:%M")
+                    low_time = low_row.name.strftime("%H:%M")
+
+                    # Dynamic selection logic:
+                    # If post-session high is above the 9:40 price, treat the move as HIGH.
+                    # Otherwise, treat it as LOW, using the post-session low.
+                    if post_high > price_940:
+                        selected_price = post_high
+                        direction = "HIGH"
+                    else:
+                        selected_price = post_low
+                        direction = "LOW"
+
+                    pct_gain = (
+                        (selected_price - price_940) / price_940 * 100 if price_940 > 0 else 0
+                    )
+
+                    daily_records.append(
+                        {
+                            "date": d,
+                            "price_940": price_940,
+                            "post_high": post_high,
+                            "post_low": post_low,
+                            "selected_price": selected_price,
+                            "direction": direction,
+                            "high_time": high_time,
+                            "low_time": low_time,
+                            "pct_gain": pct_gain,
+                        }
+                    )
                 
                 if not daily_records:
                     continue
                 
                 # Store data for view mode switching
                 self.stored_data[sym] = daily_records
-                
-                # Calculate summary/averages
-                avg_pct_gain = sum(r['pct_gain'] for r in daily_records) / len(daily_records)
-                avg_start = sum(r['start_value'] for r in daily_records) / len(daily_records)
-                avg_close = sum(r['close_value'] for r in daily_records) / len(daily_records)
-                avg_opening_pct = sum(r['opening_range_pct'] for r in daily_records) / len(daily_records)
-                avg_day_high = sum(r['day_high'] for r in daily_records) / len(daily_records)
-                avg_day_low = sum(r['day_low'] for r in daily_records) / len(daily_records)
-                
-                # Determine if mostly HIGH or LOW in collapsed view
-                positive_days = sum(1 for r in daily_records if r['pct_gain'] > 0)
-                negative_days = sum(1 for r in daily_records if r['pct_gain'] < 0)
-                # Collapsed summary remark: show only LOW or HIGH (NO timestamps)
-                if avg_pct_gain >= 0:
-                    summary_remark = f"HIGH: ${avg_day_high:.2f}"
-                else:
-                    summary_remark = f"LOW: ${avg_day_low:.2f}"
-                
-                # Add parent row (collapsed view)
-                parent_values = (
-                    sym,
-                    "SUMMARY",
-                    f"Avg cross: {avg_opening_pct:.2f}%",
-                    f"${avg_start:.2f}",
-                    f"${avg_close:.2f}",
-                    f"{avg_pct_gain:.2f}%",
-                    summary_remark
-                )
-                
-                parent = self.add_parent_row(self.tree, parent_values, 5, 0)
-                
-                # Add child rows (expanded view) - hidden by default
-                for record in daily_records:
-                    # Detailed remarks with timestamps
-                    remarks = f"LOW: ${record['day_low']:.2f} @ {record['low_time']} | HIGH: ${record['day_high']:.2f} @ {record['high_time']}"
-                    
-                    child_values = (
-                        str(record['date']),
-                        record['opening_cross'],
-                        f"${record['start_value']:.2f}",
-                        f"${record['close_value']:.2f}",
-                        f"{record['pct_gain']:.2f}%",
-                        remarks
-                    )
-                    
-                    # Child rows live under the parent symbol; keep Symbol column empty.
-                    child = self.add_child_row(self.tree, parent, ("",) + child_values)
-                    
-                    # Color code based on % gain
-                    if record['pct_gain'] > 0:
-                        self.tree.item(child, tags=('positive',))
-                    elif record['pct_gain'] < 0:
-                        self.tree.item(child, tags=('negative',))
-                
-                # Configure color tags
-                self.tree.tag_configure('positive', background='#dcfce7')
-                self.tree.tag_configure('negative', background='#fee2e2')
+
+                # Build UI rows for this symbol
+                self._add_symbol_rows(sym, daily_records)
                 
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
         
         self.update_progress(total_symbols, total_symbols)
         self.reset_progress(success=True)
+
+    def _compute_summary(self, daily_records):
+        """Compute aggregated metrics used for the collapsed/summary row."""
+        n = len(daily_records)
+        if n == 0:
+            return None
+
+        avg_940 = sum(r["price_940"] for r in daily_records) / n
+        avg_high = sum(r["post_high"] for r in daily_records) / n
+        avg_low = sum(r["post_low"] for r in daily_records) / n
+
+        # Collapsed-row selection logic
+        if avg_high > avg_940:
+            summary_direction = "HIGH"
+            summary_price = avg_high
+        else:
+            summary_direction = "LOW"
+            summary_price = avg_low
+
+        pct_gain = (
+            (summary_price - avg_940) / avg_940 * 100 if avg_940 > 0 else 0
+        )
+
+        return {
+            "avg_940": avg_940,
+            "avg_high": avg_high,
+            "avg_low": avg_low,
+            "summary_price": summary_price,
+            "summary_direction": summary_direction,
+            "pct_gain": pct_gain,
+            "days": n,
+        }
+
+    def _add_symbol_rows(self, sym, daily_records):
+        """
+        Add the parent (collapsed) row and all child (per-day) rows for a symbol,
+        applying direction-based coloring.
+        """
+        summary = self._compute_summary(daily_records)
+        if summary is None:
+            return
+
+        # Collapsed/summary parent row
+        parent_values = (
+            sym,                                   # Symbol
+            f"{summary['days']} days",             # Date (summary)
+            f"${summary['avg_940']:.2f}",          # Price at 9:40
+            summary["summary_direction"],          # Indication
+            f"${summary['avg_high']:.2f}",         # Highest value (avg)
+            f"${summary['avg_low']:.2f}",          # Lowest value (avg)
+            "",                                    # Direction (not used on parent)
+            f"{summary['pct_gain']:.2f}%",         # % Gain
+            "",                                    # Remarks
+        )
+
+        parent = self.add_parent_row(self.tree, parent_values)
+
+        # Apply collapsed-row color purely based on summary direction
+        if summary["summary_direction"] == "HIGH":
+            self.tree.item(parent, tags=("dir_high",))
+        else:
+            self.tree.item(parent, tags=("dir_low",))
+
+        # Detailed child rows (per trading day)
+        for record in daily_records:
+            remarks = (
+                f"HIGH: ${record['post_high']:.2f} @ {record['high_time']} | "
+                f"LOW: ${record['post_low']:.2f} @ {record['low_time']}"
+            )
+
+            child_values = (
+                f"  {record['date']}",                              # Symbol column (#0)
+                str(record["date"]),                                # Date
+                f"${record['price_940']:.2f}",                      # Price at 9:40
+                record["direction"],                                # Indication
+                f"${record['post_high']:.2f} @ {record['high_time']}",  # Highest value
+                f"${record['post_low']:.2f} @ {record['low_time']}",    # Lowest value
+                record["direction"],                                # Direction
+                f"{record['pct_gain']:.2f}%",                       # % Gain
+                remarks,                                            # Remarks (for average view)
+            )
+
+            child = self.add_child_row(self.tree, parent, child_values)
+
+            # Apply per-row coloring based on the day-level selection
+            if record["direction"] == "HIGH":
+                self.tree.item(child, tags=("dir_high",))
+            else:
+                self.tree.item(child, tags=("dir_low",))
     
     def toggle_view_mode(self):
-        """Switch between detailed and average view modes"""
-        # Rebuild from stored data (no refetch) for deterministic results.
-        self.tree.delete(*self.tree.get_children())
-        self.expanded_items.clear()
+        """Switch between detailed and average views by showing/hiding columns."""
+        mode = self.view_mode.get()
 
-        for sym, daily_records in self.stored_data.items():
-            if not daily_records:
-                continue
+        if mode == "average":
+            # Hide detailed-only columns
+            for col in ("Highest value", "Lowest value", "Direction"):
+                self.tree.column(col, width=0, stretch=False)
 
-            avg_pct_gain = sum(r['pct_gain'] for r in daily_records) / len(daily_records)
-            avg_start = sum(r['start_value'] for r in daily_records) / len(daily_records)
-            avg_close = sum(r['close_value'] for r in daily_records) / len(daily_records)
-            avg_opening_pct = sum(r['opening_range_pct'] for r in daily_records) / len(daily_records)
-            avg_day_high = sum(r['day_high'] for r in daily_records) / len(daily_records)
-            avg_day_low = sum(r['day_low'] for r in daily_records) / len(daily_records)
+            # Key columns for average view
+            for col, width in [
+                ("Date", 120),
+                ("Price at 9:40am", 120),
+                ("Indication", 100),
+                ("% Gain", 90),
+                ("Remarks", 260),
+            ]:
+                self.tree.column(col, width=width, stretch=True)
 
-            if avg_pct_gain >= 0:
-                summary_remark = f"HIGH: ${avg_day_high:.2f}"
-            else:
-                summary_remark = f"LOW: ${avg_day_low:.2f}"
+            # Collapse parents; user can expand to see row-level remarks
+            for parent in self.tree.get_children():
+                self.tree.item(parent, open=False)
+        else:
+            # Detailed view: show all analytical columns; remarks is optional.
+            for col, width in [
+                ("Date", 120),
+                ("Price at 9:40am", 120),
+                ("Indication", 90),
+                ("Highest value", 170),
+                ("Lowest value", 170),
+                ("Direction", 90),
+                ("% Gain", 90),
+            ]:
+                self.tree.column(col, width=width, stretch=True)
 
-            parent_values = (
-                sym,
-                "SUMMARY",
-                f"Avg cross: {avg_opening_pct:.2f}%",
-                f"${avg_start:.2f}",
-                f"${avg_close:.2f}",
-                f"{avg_pct_gain:.2f}%",
-                summary_remark
-            )
-            parent = self.add_parent_row(self.tree, parent_values, 5, 0)
-
-            if self.view_mode.get() == "average":
-                # Average mode: keep collapsed-only rows (no children)
-                continue
-
-            for record in daily_records:
-                remarks = f"LOW: ${record['day_low']:.2f} @ {record['low_time']} | HIGH: ${record['day_high']:.2f} @ {record['high_time']}"
-                child_values = (
-                    "",  # keep Symbol column empty for children
-                    str(record['date']),
-                    record['opening_cross'],
-                    f"${record['start_value']:.2f}",
-                    f"${record['close_value']:.2f}",
-                    f"{record['pct_gain']:.2f}%",
-                    remarks
-                )
-                child = self.add_child_row(self.tree, parent, child_values)
-                if record['pct_gain'] > 0:
-                    self.tree.item(child, tags=('positive',))
-                elif record['pct_gain'] < 0:
-                    self.tree.item(child, tags=('negative',))
-
-        self.tree.tag_configure('positive', background='#dcfce7')
-        self.tree.tag_configure('negative', background='#fee2e2')
+            # Keep remarks narrow but present
+            self.tree.column("Remarks", width=40, stretch=False)
 
 
 class ReversalCycleTab(BaseTab):
@@ -1417,7 +1369,7 @@ class ReversalCycleTab(BaseTab):
         
         self.create_progress_bar()
         
-        self.tree = self.create_treeview(("Symbol", "Total Cycles", "Avg Cycles/Day", "Daily Breakdown"), collapsible=True)
+        self.tree = self.create_treeview(("Symbol", "Total Cycles", "Avg Cycles/Day", "Daily Breakdown"))
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
