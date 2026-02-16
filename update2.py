@@ -205,36 +205,36 @@ class StockAnalysisApp:
         control_frame = tk.Frame(toolbar, bg="#e2e8f0")
         control_frame.pack(side=tk.RIGHT, padx=10)
 
-        # Interval input with help
-        tk.Label(control_frame, text="Interval:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(5,2))
-        interval_entry = tk.Entry(control_frame, textvariable=self.interval_var, width=8, font=("Helvetica", 9))
-        interval_entry.pack(side=tk.LEFT, padx=5)
-        tk.Button(control_frame, text="?", width=2, relief="flat", bg="#94a3b8", fg="white",
-                 font=("Helvetica", 8, "bold"), cursor="hand2", 
-                 command=lambda: show_help("interval")).pack(side=tk.LEFT, padx=(2, 5))
+        # # Interval input with help
+        # tk.Label(control_frame, text="Interval:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(5,2))
+        # interval_entry = tk.Entry(control_frame, textvariable=self.interval_var, width=8, font=("Helvetica", 9))
+        # interval_entry.pack(side=tk.LEFT, padx=5)
+        # tk.Button(control_frame, text="?", width=2, relief="flat", bg="#94a3b8", fg="white",
+        #          font=("Helvetica", 8, "bold"), cursor="hand2", 
+        #          command=lambda: show_help("interval")).pack(side=tk.LEFT, padx=(2, 5))
 
-        # Date range controls with help
-        tk.Label(control_frame, text="Start:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(10,2))
-        start_entry = tk.Entry(control_frame, textvariable=self.start_date_var, width=12, font=("Helvetica", 9))
-        start_entry.pack(side=tk.LEFT, padx=2)
-        start_entry.bind('<FocusOut>', lambda e: self.validate_date_range())
+        # # Date range controls with help
+        # tk.Label(control_frame, text="Start:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(10,2))
+        # start_entry = tk.Entry(control_frame, textvariable=self.start_date_var, width=12, font=("Helvetica", 9))
+        # start_entry.pack(side=tk.LEFT, padx=2)
+        # start_entry.bind('<FocusOut>', lambda e: self.validate_date_range())
         
-        tk.Label(control_frame, text="End:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(5,2))
-        end_entry = tk.Entry(control_frame, textvariable=self.end_date_var, width=12, font=("Helvetica", 9))
-        end_entry.pack(side=tk.LEFT, padx=2)
-        end_entry.bind('<FocusOut>', lambda e: self.validate_date_range())
-        tk.Button(control_frame, text="?", width=2, relief="flat", bg="#94a3b8", fg="white",
-                 font=("Helvetica", 8, "bold"), cursor="hand2", 
-                 command=lambda: show_help("date_range")).pack(side=tk.LEFT, padx=(2, 5))
+        # tk.Label(control_frame, text="End:", bg="#e2e8f0", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(5,2))
+        # end_entry = tk.Entry(control_frame, textvariable=self.end_date_var, width=12, font=("Helvetica", 9))
+        # end_entry.pack(side=tk.LEFT, padx=2)
+        # end_entry.bind('<FocusOut>', lambda e: self.validate_date_range())
+        # tk.Button(control_frame, text="?", width=2, relief="flat", bg="#94a3b8", fg="white",
+        #          font=("Helvetica", 8, "bold"), cursor="hand2", 
+        #          command=lambda: show_help("date_range")).pack(side=tk.LEFT, padx=(2, 5))
         
-        # Predefined date range buttons
-        date_btn_frame = tk.Frame(control_frame, bg="#e2e8f0")
-        date_btn_frame.pack(side=tk.LEFT, padx=(10, 0))
+        # # Predefined date range buttons
+        # date_btn_frame = tk.Frame(control_frame, bg="#e2e8f0")
+        # date_btn_frame.pack(side=tk.LEFT, padx=(10, 0))
         
-        for label, days in [("1D", 1), ("3D", 3), ("5D", 5), ("1W", 5)]:
-            tk.Button(date_btn_frame, text=label, command=lambda d=days: self.set_date_range(d),
-                     bg="#94a3b8", fg="white", font=("Helvetica", 8, "bold"),
-                     relief="flat", padx=6, pady=4, cursor="hand2").pack(side=tk.LEFT, padx=2)
+        # for label, days in [("1D", 1), ("3D", 3), ("5D", 5), ("1W", 5)]:
+        #     tk.Button(date_btn_frame, text=label, command=lambda d=days: self.set_date_range(d),
+        #              bg="#94a3b8", fg="white", font=("Helvetica", 8, "bold"),
+        #              relief="flat", padx=6, pady=4, cursor="hand2").pack(side=tk.LEFT, padx=2)
 
         # Help button
         tk.Button(control_frame, text="❓ Help", command=self.show_help, bg="#64748b", fg="white",
@@ -671,6 +671,43 @@ class BaseTab:
                              pady=15)
         frame.pack(fill=tk.X, padx=15, pady=15)
         return frame
+    
+        
+    def create_date_interval_controls(self, parent_frame):
+        """Create date range and interval controls for individual tab"""
+        control_frame = tk.Frame(parent_frame, bg="#ffffff")
+        control_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        # Interval input with help
+        tk.Label(control_frame, text="Interval:", bg="#ffffff", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(5,2))
+        interval_entry = tk.Entry(control_frame, textvariable=self.app.interval_var, width=8, font=("Helvetica", 9))
+        interval_entry.pack(side=tk.LEFT, padx=5)
+        tk.Button(control_frame, text="?", width=2, relief="flat", bg="#94a3b8", fg="white",
+                font=("Helvetica", 8, "bold"), cursor="hand2", 
+                command=lambda: show_help("interval")).pack(side=tk.LEFT, padx=(2, 5))
+
+        # Date range controls with help
+        tk.Label(control_frame, text="Start:", bg="#ffffff", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(10,2))
+        start_entry = tk.Entry(control_frame, textvariable=self.app.start_date_var, width=12, font=("Helvetica", 9))
+        start_entry.pack(side=tk.LEFT, padx=2)
+        start_entry.bind('<FocusOut>', lambda e: self.app.validate_date_range())
+        
+        tk.Label(control_frame, text="End:", bg="#ffffff", font=("Helvetica", 9)).pack(side=tk.LEFT, padx=(5,2))
+        end_entry = tk.Entry(control_frame, textvariable=self.app.end_date_var, width=12, font=("Helvetica", 9))
+        end_entry.pack(side=tk.LEFT, padx=2)
+        end_entry.bind('<FocusOut>', lambda e: self.app.validate_date_range())
+        tk.Button(control_frame, text="?", width=2, relief="flat", bg="#94a3b8", fg="white",
+                font=("Helvetica", 8, "bold"), cursor="hand2", 
+                command=lambda: show_help("date_range")).pack(side=tk.LEFT, padx=(2, 5))
+        
+        # Predefined date range buttons
+        date_btn_frame = tk.Frame(control_frame, bg="#ffffff")
+        date_btn_frame.pack(side=tk.LEFT, padx=(10, 0))
+        
+        for label, days in [("1D", 1), ("3D", 3), ("5D", 5), ("1W", 5)]:
+            tk.Button(date_btn_frame, text=label, command=lambda d=days: self.app.set_date_range(d),
+                     bg="#94a3b8", fg="white", font=("Helvetica", 8, "bold"),
+                     relief="flat", padx=6, pady=4, cursor="hand2").pack(side=tk.LEFT, padx=2)
 
     def create_progress_bar(self):
         """Create progress bar frame and return it"""
@@ -946,6 +983,9 @@ class SwingCounterTab(BaseTab):
                  relief="flat", cursor="hand2").pack(side=tk.LEFT)
         self.create_help_button(run_btn_frame, "run_calculate")
         
+        # Add date and interval controls
+        self.create_date_interval_controls(self.frame)
+        
         self.create_progress_bar()
         
         self.tree = self.create_treeview(("Symbol", "Up Swings", "Down Swings", "Total Swings", "Avg Daily"))
@@ -1045,12 +1085,11 @@ class DownFromHighTab(BaseTab):
         
         self.create_progress_bar()
         
-        self.tree = self.create_treeview(("Symbol", "Current Price", "Day High", "% Down", "Avg %"))
+        self.tree = self.create_treeview(("Symbol", "Current Price", "Day High", "% Down"))
 
     def run(self):
         self.tree.delete(*self.tree.get_children())
         self.expanded_items.clear()
-        # Use active_symbols if available, otherwise load from CSV
         symbols = self.app.active_symbols if self.app.active_symbols else self.universe.load_symbols()
         threshold = self.n_pct.get()
         total_symbols = len(symbols)
@@ -1059,57 +1098,124 @@ class DownFromHighTab(BaseTab):
             messagebox.showwarning("No Symbols", "Please load or select symbols first")
             return
         
-        start_date, end_date = self.get_date_range()
+        # Determine if market is currently open (Monday-Friday, 09:30-16:00)
+        today = date.today()
+        current_time = datetime.now().time()
+        is_market_open = (
+            is_trading_day(today) and
+            datetime.strptime("09:30", "%H:%M").time() <= current_time <= datetime.strptime("16:00", "%H:%M").time()
+        )
+        
+        if is_market_open:
+            # During trading hours: check current price vs high so far today
+            analysis_date = today
+            check_type = "current"  # Check current price vs day high
+        else:
+            # Outside trading hours: check last trading day's LOW vs HIGH
+            analysis_date = get_previous_trading_day(today)
+            check_type = "low"  # Check previous day's low vs high
         
         for idx, sym in enumerate(symbols):
             self.update_progress(idx, total_symbols)
             try:
                 interval = self.app.interval_var.get().strip()
-                # Use date range instead of period
-                df = yf.Ticker(sym).history(start=start_date, end=end_date + timedelta(days=1), interval=interval)
+                # Fetch data for the analysis date only
+                df = yf.Ticker(sym).history(start=analysis_date, end=analysis_date + timedelta(days=1), interval=interval)
+                
                 if df.empty:
                     continue
-
-                # Group by date to track daily data
-                df["date"] = df.index.date
-                daily_data = []
                 
-                for date, day_data in df.groupby("date"):
-                    
-                    if len(day_data) <= 10:
-                        continue
-                    day_after_10 = day_data.iloc[11:]
-                    high = day_after_10["High"].max()
-                    current = day_data["Close"].iloc[-1]
-                    drop = (high - current) / high * 100
-                    daily_data.append((date, current, high, drop))
+                # Get high price for the day
+                high = df["High"].max()
                 
-                if not daily_data:
+                if check_type == "current":
+                    # During market hours: use current (latest) close price
+                    current = df["Close"].iloc[-1]
+                else:
+                    # After hours: use the LOW price of the day
+                    current = df["Low"].min()
+                
+                # Calculate how much down from high
+                drop = (high - current) / high * 100
+                
+                # Only show if it meets the threshold
+                if drop < threshold:
                     continue
                 
-                # Filter by threshold and calculate averages
-                filtered_data = [d for d in daily_data if d[3] >= threshold]
-                if not filtered_data:
-                    continue
-                
-                avg_drop = sum(d[3] for d in filtered_data) / len(filtered_data)
-                avg_high = sum(d[2] for d in filtered_data) / len(filtered_data)
-                avg_current = sum(d[1] for d in filtered_data) / len(filtered_data)
-                
-                # Add parent row with summary
-                parent = self.add_parent_row(self.tree, 
-                                            (sym, f"${avg_current:.2f}", f"${avg_high:.2f}", f"{avg_drop:.2f}%", f"{avg_drop:.2f}%"),
-                                            3, threshold, reverse=True)
-                
-                # Add child rows with daily data
-                for date, current, high, drop in filtered_data:
-                    self.add_child_row(self.tree, parent, (f"  {date}", f"${current:.2f}", f"${high:.2f}", f"{drop:.2f}%", ""))
+                # Add single row
+                self.add_parent_row(self.tree, 
+                                (sym, f"${current:.2f}", f"${high:.2f}", f"{drop:.2f}%"),
+                                3, threshold, reverse=True)
                 
             except Exception as e:
                 print(f"Error processing {sym}: {str(e)}")
         
         self.update_progress(total_symbols, total_symbols)
         self.reset_progress(success=True)
+
+    # def run(self):
+    #     self.tree.delete(*self.tree.get_children())
+    #     self.expanded_items.clear()
+    #     # Use active_symbols if available, otherwise load from CSV
+    #     symbols = self.app.active_symbols if self.app.active_symbols else self.universe.load_symbols()
+    #     threshold = self.n_pct.get()
+    #     total_symbols = len(symbols)
+        
+    #     if not symbols:
+    #         messagebox.showwarning("No Symbols", "Please load or select symbols first")
+    #         return
+        
+    #     start_date, end_date = self.get_date_range()
+        
+    #     for idx, sym in enumerate(symbols):
+    #         self.update_progress(idx, total_symbols)
+    #         try:
+    #             interval = self.app.interval_var.get().strip()
+    #             # Use date range instead of period
+    #             df = yf.Ticker(sym).history(start=start_date, end=end_date + timedelta(days=1), interval=interval)
+    #             if df.empty:
+    #                 continue
+
+    #             # Group by date to track daily data
+    #             df["date"] = df.index.date
+    #             daily_data = []
+                
+    #             for date, day_data in df.groupby("date"):
+                    
+    #                 if len(day_data) <= 10:
+    #                     continue
+    #                 day_after_10 = day_data.iloc[11:]
+    #                 high = day_after_10["High"].max()
+    #                 current = day_data["Close"].iloc[-1]
+    #                 drop = (high - current) / high * 100
+    #                 daily_data.append((date, current, high, drop))
+                
+    #             if not daily_data:
+    #                 continue
+                
+    #             # Filter by threshold and calculate averages
+    #             filtered_data = [d for d in daily_data if d[3] >= threshold]
+    #             if not filtered_data:
+    #                 continue
+                
+    #             avg_drop = sum(d[3] for d in filtered_data) / len(filtered_data)
+    #             avg_high = sum(d[2] for d in filtered_data) / len(filtered_data)
+    #             avg_current = sum(d[1] for d in filtered_data) / len(filtered_data)
+                
+    #             # Add parent row with summary
+    #             parent = self.add_parent_row(self.tree, 
+    #                                         (sym, f"${avg_current:.2f}", f"${avg_high:.2f}", f"{avg_drop:.2f}%", f"{avg_drop:.2f}%"),
+    #                                         3, threshold, reverse=True)
+                
+    #             # Add child rows with daily data
+    #             for date, current, high, drop in filtered_data:
+    #                 self.add_child_row(self.tree, parent, (f"  {date}", f"${current:.2f}", f"${high:.2f}", f"{drop:.2f}%", ""))
+                
+    #         except Exception as e:
+    #             print(f"Error processing {sym}: {str(e)}")
+        
+    #     self.update_progress(total_symbols, total_symbols)
+    #     self.reset_progress(success=True)
 
 
 class EarlySessionTab(BaseTab):
@@ -1150,11 +1256,9 @@ class EarlySessionTab(BaseTab):
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
                  relief="flat", cursor="hand2").pack(side=tk.LEFT)
         self.create_help_button(analyze_btn_frame, "run_calculate")
-    
-    def _update_description(self):
-        """Update the description label with current start time"""
-        start_time = self.start_time_var.get()
-        self.desc_label.config(text=f"Anchors at {start_time}, then compares post-{start_time} highs/lows vs that price")
+        
+        # Add date and interval controls
+        self.create_date_interval_controls(self.frame)
         
         self.create_progress_bar()
         
@@ -1185,7 +1289,12 @@ class EarlySessionTab(BaseTab):
             background="#fee2e2",  # reddish
             foreground="#991b1b",
         )
-
+    
+    def _update_description(self):
+        """Update the description label with current start time"""
+        start_time = self.start_time_var.get()
+        self.desc_label.config(text=f"Anchors at {start_time}, then compares post-{start_time} highs/lows vs that price")
+    
     def _update_column_headers(self):
         """Update column headers to reflect current start time"""
         start_time = self.start_time_var.get()
@@ -1512,7 +1621,7 @@ class EarlySessionTab(BaseTab):
 class ReversalCycleTab(BaseTab):
     """Tab 4: n% Price Reversal Cycle Counter"""
     
-    def __init__(self, notebook, universe , app):
+    def __init__(self, notebook, universe, app):
         super().__init__(notebook, universe, app)
         self.n_pct = tk.DoubleVar(value=2.0)
         self.build_ui()
@@ -1524,15 +1633,15 @@ class ReversalCycleTab(BaseTab):
         tk.Entry(controls, textvariable=self.n_pct, width=8, font=("Helvetica", 10)).grid(row=0, column=1, padx=5)
         self.create_help_button(controls, "reversal_pct", row=0, column=2)
         
-        tk.Label(controls, text="(Date range set in toolbar)", bg="#ffffff", font=("Helvetica", 9), 
-                fg="#64748b").grid(row=0, column=3, padx=(15, 5))
-        
         cycle_btn_frame = tk.Frame(controls, bg="#ffffff")
-        cycle_btn_frame.grid(row=0, column=4, padx=15)
+        cycle_btn_frame.grid(row=0, column=3, padx=15)
         tk.Button(cycle_btn_frame, text="🔄 Count Cycles", bg="#ef4444", fg="white",
                  font=("Helvetica", 10, "bold"), command=self.run, padx=20, pady=8,
                  relief="flat", cursor="hand2").pack(side=tk.LEFT)
         self.create_help_button(cycle_btn_frame, "run_calculate")
+        
+        # Add date and interval controls
+        self.create_date_interval_controls(self.frame)
         
         self.create_progress_bar()
         
